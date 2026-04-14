@@ -41,12 +41,12 @@ window.onload = function () {
         // ===== DASH =====
         dashRequested: false,
         dashTime: 0,
-        dashDuration: 120,
-        dashCooldown: 1200, // Time to recharge ALL charges
+        dashDuration: 60, // Much shorter explosive burst
+        dashCooldown: 1200, 
         lastDashTime: 0,
         dashCharges: 1,
         maxDashCharges: 1,
-        dashSpeed: 12,
+        dashSpeed: 24, // Insanely fast speed to cover the exact same distance
         dashDirX: 1,
         dashDirY: 0,
         
@@ -57,8 +57,10 @@ window.onload = function () {
         baseMaxDashCharges: 1,
         baseBrake: 0.35,
         baseGravity: 0.475,
+        baseMaxFallSpeed: 10,
         
-        powerUps: {}
+        powerUps: {},
+        trail: [] // Stores visual ghost frames
     };
 
     let gravity = 0.475;
@@ -197,6 +199,9 @@ window.onload = function () {
             if (now > player.powerUps[type]) delete player.powerUps[type];
         }
 
+        // Clean up visual trails smoothly
+        player.trail = player.trail.filter(t => now - t.time < 200);
+
         let prevH = player.h;
 
         player.w = player.baseW;
@@ -205,6 +210,7 @@ window.onload = function () {
         player.jumpPower = player.baseJumpPower;
         player.maxDashCharges = player.baseMaxDashCharges;
         player.brake = player.baseBrake;
+        player.maxFallSpeed = player.baseMaxFallSpeed;
         gravity = player.baseGravity;
 
         if (player.powerUps["doubleDash"]) player.maxDashCharges = 2;
@@ -212,6 +218,8 @@ window.onload = function () {
         if (player.powerUps["antiGravity"]) gravity = 0.15; // Moon gravity jump physics
         if (player.powerUps["superSpeed"]) player.maxSpeed = 10;
         if (player.powerUps["giantBox"]) { player.w = 120; player.h = 120; }
+        if (player.powerUps["miniBox"]) { player.w = 25; player.h = 25; }
+        if (player.powerUps["feather"]) player.maxFallSpeed = 2; // slow fall
         if (player.powerUps["icePhysics"]) player.brake = 0.02; // Slide friction
 
         if (player.h > prevH) {
@@ -252,9 +260,24 @@ window.onload = function () {
             player.x += player.vx;
             player.y += player.vy;
 
+            // Generate trail ghost particle
+            player.trail.push({ 
+                x: player.x, 
+                y: player.y, 
+                w: player.w, 
+                h: player.h, 
+                dirX: player.dashDirX, 
+                dirY: player.dashDirY,
+                time: Date.now() 
+            });
+
             // collision resolution
             for (let p of platforms) {
                 if (!isPlatformSolid(p)) continue;
+                
+                // GHOST MECHANIC: Dash through everything except ground/ceiling
+                if (player.powerUps["ghost"] && p.type !== "ground") continue;
+
                 if (
                     player.x < p.x + p.w &&
                     player.x + player.w > p.x &&
@@ -499,6 +522,9 @@ window.onload = function () {
                 else if (p.powerUpType === 'superSpeed') ctx.fillStyle = '#FFFF00';
                 else if (p.powerUpType === 'giantBox') ctx.fillStyle = '#FF0000';
                 else if (p.powerUpType === 'icePhysics') ctx.fillStyle = '#FFFFFF';
+                else if (p.powerUpType === 'ghost') ctx.fillStyle = '#555555';
+                else if (p.powerUpType === 'miniBox') ctx.fillStyle = '#FFA500';
+                else if (p.powerUpType === 'feather') ctx.fillStyle = '#FFC0CB';
 
                 if (Math.floor(Date.now() / 200) % 2 === 0) {
                    ctx.strokeStyle = '#FFFFFF';
@@ -509,9 +535,41 @@ window.onload = function () {
             }
         }
 
+        // Draw Ghost Trails
+        player.trail.forEach(t => {
+            let age = Date.now() - t.time;
+            let alpha = 1.0 - (age / 150);
+            if (alpha > 0) {
+                ctx.fillStyle = `rgba(0, 255, 255, ${alpha * 0.5})`;
+                ctx.fillRect(t.x - camera.x, t.y - camera.y, t.w, t.h);
+            }
+        });
+
+        // Draw Player (strict square without deformations)
         ctx.fillStyle = player.state === "dash" ? "cyan" : "blue";
         if (player.powerUps['giantBox']) ctx.fillStyle = "red";
-        ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
+        
+        let screenX = player.x - camera.x;
+        let screenY = player.y - camera.y;
+
+        if (player.state === "dash") {
+            ctx.fillRect(screenX, screenY, player.w, player.h);
+            
+            // Add a burst impact flash at the very front edge
+            ctx.fillStyle = "white";
+            ctx.globalAlpha = Math.random() * 0.5 + 0.3;
+            ctx.beginPath();
+            ctx.arc(
+                screenX + (player.dashDirX >= 0 ? player.w : 0),
+                screenY + (player.dashDirY >= 0 ? player.h : player.h / 2),
+                Math.random() * 15 + 10,
+                0, Math.PI * 2
+            );
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+        } else {
+            ctx.fillRect(screenX, screenY, player.w, player.h);
+        }
 
         const powerUpKeys = Object.keys(player.powerUps);
         ctx.fillStyle = "rgba(0, 0, 0, 0.55)";

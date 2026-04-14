@@ -255,7 +255,7 @@ function createLevelGenerator() {
        all_platforms.push(ghost);
     }
 
-    const POWER_UP_TYPES = ['doubleDash', 'highJump', 'antiGravity', 'superSpeed', 'giantBox', 'icePhysics'];
+    const POWER_UP_TYPES = ['doubleDash', 'highJump', 'antiGravity', 'superSpeed', 'giantBox', 'icePhysics', 'ghost', 'miniBox', 'feather'];
     let powerUpIndex = 0;
     
     // Increased spawn probability to 25% and mapped sequentially ensuring a perfect variety
