@@ -1,6 +1,15 @@
 window.onload = function () {
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+
     const player = {
         x: 100,
         y: 100,
@@ -16,28 +25,51 @@ window.onload = function () {
         airControl: 0.75
     };
     const gravity = 0.3;
+    const world = {
+        width: 5000,
+        height: 2000
+    };
 
     const platforms = [
         {
             x: 0,
-            y: canvas.height - 100,
-            w: canvas.width,
+            y: world.height - 100,
+            w: world.width,
             h: 100
         },
         {
             x: 300,
-            y: canvas.height - 200,
+            y: world.height - 200,
             w: 200,
             h: 20
         },
         {
             x: 600,
-            y: canvas.height - 300,
+            y: world.height - 300,
             w: 200,
+            h: 20
+        },
+        {
+            x: 900,
+            y: world.height - 400,
+            w: 300,
+            h: 20
+        },
+        {
+            x: 1400,
+            y: world.height - 500,
+            w: 100,
             h: 20
         }
     ];
+
+    const camera = {
+        x: 0,
+        y: 0
+    };
+
     const keys = {};
+    const margin = 150;
 
     window.addEventListener("keydown", (e) => {
         keys[e.key] = true;
@@ -63,7 +95,7 @@ window.onload = function () {
             player.lastJumpTime = Date.now();
         }
 
-        if(!player.onGround) {
+        if (!player.onGround) {
             if (keys["ArrowLeft"]) player.vx = -player.speed * player.airControl;
             if (keys["ArrowRight"]) player.vx = player.speed * player.airControl;
         }
@@ -89,12 +121,36 @@ window.onload = function () {
                     player.vy = 0;
                     player.onGround = true;
                 }
-                if(player.vy < 0) {
+                if (player.vy < 0) {
                     player.y = p.y + p.h;
                     player.vy = 0;
                 }
             }
         }
+        let screenX = player.x - camera.x;
+        let screenY = player.y - camera.y;
+
+        // moving right
+        if (screenX > canvas.width - margin) {
+            camera.x = player.x - (canvas.width - margin);
+        }
+
+        // moving left
+        if (screenX < margin) {
+            camera.x = player.x - margin;
+        }
+
+        //moving down
+        if (screenY > canvas.height - margin) {
+            camera.y = player.y - (canvas.height - margin);
+        }
+
+        // moving up
+        if (screenY < margin) {
+            camera.y = player.y - margin;
+        }
+        camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
+        camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
     }
 
     function draw() {
@@ -102,12 +158,12 @@ window.onload = function () {
 
         // player
         ctx.fillStyle = "blue";
-        ctx.fillRect(player.x, player.y, player.w, player.h);
+        ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
 
         // platforms
         ctx.fillStyle = "green";
         for (let p of platforms) {
-            ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.fillRect(p.x - camera.x, p.y - camera.y, p.w, p.h);
         }
     }
 
