@@ -48,10 +48,20 @@ window.onload = function () {
         maxDashCharges: 1,
         dashSpeed: 12,
         dashDirX: 1,
-        dashDirY: 0
+        dashDirY: 0,
+        
+        baseW: 50,
+        baseH: 50,
+        baseMaxSpeed: 4.5,
+        baseJumpPower: 15,
+        baseMaxDashCharges: 1,
+        baseBrake: 0.35,
+        baseGravity: 0.475,
+        
+        powerUps: {}
     };
 
-    const gravity = 0.475;
+    let gravity = 0.475;
 
     const world = {
         width: 5000,
@@ -182,6 +192,32 @@ window.onload = function () {
 
         updateCrumblePlatforms(now);
 
+        // ===== POWER-UP MANAGEMENT =====
+        for (let type in player.powerUps) {
+            if (now > player.powerUps[type]) delete player.powerUps[type];
+        }
+
+        let prevH = player.h;
+
+        player.w = player.baseW;
+        player.h = player.baseH;
+        player.maxSpeed = player.baseMaxSpeed;
+        player.jumpPower = player.baseJumpPower;
+        player.maxDashCharges = player.baseMaxDashCharges;
+        player.brake = player.baseBrake;
+        gravity = player.baseGravity;
+
+        if (player.powerUps["doubleDash"]) player.maxDashCharges = 2;
+        if (player.powerUps["highJump"]) player.jumpPower = 25;
+        if (player.powerUps["antiGravity"]) gravity = 0.15; // Moon gravity jump physics
+        if (player.powerUps["superSpeed"]) player.maxSpeed = 10;
+        if (player.powerUps["giantBox"]) { player.w = 120; player.h = 120; }
+        if (player.powerUps["icePhysics"]) player.brake = 0.02; // Slide friction
+
+        if (player.h > prevH) {
+            player.y -= (player.h - prevH); // Shift up to prevent floor clipping
+        }
+
         let inputX = 0;
         if (keys["ArrowLeft"]) inputX -= 1;
         if (keys["ArrowRight"]) inputX += 1;
@@ -244,6 +280,9 @@ window.onload = function () {
 
             if (player.dashTime >= player.dashDuration) {
                 setState(player.onGround ? "grounded" : "air");
+                // Stop endless flying when upward dashing finishes
+                if (player.vy < -7) player.vy = -7;
+                if (Math.abs(player.vx) > player.maxSpeed) player.vx = Math.sign(player.vx) * player.maxSpeed;
             }
 
             return;
@@ -338,18 +377,32 @@ window.onload = function () {
             setState("air");
         }
 
-        let screenX = player.x - camera.x;
-        let screenY = player.y - camera.y;
+        // ===== POWER-UP COLLECTION =====
+        for (let p of platforms) {
+            if (p.hasPowerUp) {
+                const boxX = p.x + p.w / 2 - 15;
+                const boxY = p.y - 40;
+                
+                if (
+                    player.x < boxX + 30 &&
+                    player.x + player.w > boxX &&
+                    player.y < boxY + 30 &&
+                    player.y + player.h > boxY
+                ) {
+                    player.powerUps[p.powerUpType] = Date.now() + 10000;
+                    p.hasPowerUp = false; 
+                    if (p.powerUpType === 'doubleDash') player.dashCharges = 2; // immediately give them
+                }
+            }
+        }
 
-        if (screenX > canvas.width - margin)
-            camera.x = player.x - (canvas.width - margin);
-        if (screenX < margin)
-            camera.x = player.x - margin;
-
-        if (screenY > canvas.height - margin)
-            camera.y = player.y - (canvas.height - margin);
-        if (screenY < margin)
-            camera.y = player.y - margin;
+        // ===== CAMERA SMOOTHING =====
+        const targetCamX = player.x + player.w / 2 - canvas.width / 2;
+        const targetCamY = player.y + player.h / 2 - Math.max(0, canvas.height / 2 - 150); // slight offset to see below
+        
+        const lerpFactor = player.state === "dash" ? 12.0 : 6.0; // Snap faster during dashes
+        camera.x += (targetCamX - camera.x) * dt * lerpFactor;
+        camera.y += (targetCamY - camera.y) * dt * lerpFactor;
 
         camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
         camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
@@ -434,19 +487,49 @@ window.onload = function () {
                 ctx.fillStyle = "#9B5DE5";
                 ctx.fillRect(drawX + p.w - 8, drawY - 34, 22, 16);
             }
+            if (p.hasPowerUp) {
+                const boxX = drawX + p.w / 2 - 15;
+                let boxY = drawY - 40;
+                const offset = Math.sin(Date.now() / 150 + p.id) * 4;
+                boxY += offset;
+
+                if (p.powerUpType === 'doubleDash') ctx.fillStyle = '#00F0FF';
+                else if (p.powerUpType === 'highJump') ctx.fillStyle = '#00FF00';
+                else if (p.powerUpType === 'antiGravity') ctx.fillStyle = '#FF00FF';
+                else if (p.powerUpType === 'superSpeed') ctx.fillStyle = '#FFFF00';
+                else if (p.powerUpType === 'giantBox') ctx.fillStyle = '#FF0000';
+                else if (p.powerUpType === 'icePhysics') ctx.fillStyle = '#FFFFFF';
+
+                if (Math.floor(Date.now() / 200) % 2 === 0) {
+                   ctx.strokeStyle = '#FFFFFF';
+                   ctx.lineWidth = 3;
+                   ctx.strokeRect(boxX, boxY, 30, 30);
+                }
+                ctx.fillRect(boxX, boxY, 30, 30);
+            }
         }
 
         ctx.fillStyle = player.state === "dash" ? "cyan" : "blue";
+        if (player.powerUps['giantBox']) ctx.fillStyle = "red";
         ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
 
+        const powerUpKeys = Object.keys(player.powerUps);
         ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.fillRect(16, 16, 260, 74);
+        ctx.fillRect(16, 16, 260, 74 + Math.max(0, powerUpKeys.length) * 20);
 
         ctx.fillStyle = "#FFFFFF";
         ctx.font = "16px Arial";
         ctx.fillText("Arrows: move / jump", 28, 42);
         ctx.fillText("Space: dash", 28, 62);
         ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, 82);
+        
+        let py = 102;
+        ctx.fillStyle = "#FFD700";
+        for (let type of powerUpKeys) {
+            const left = Math.ceil((player.powerUps[type] - Date.now()) / 1000);
+            ctx.fillText(`PowerUp: ${type} (${left}s)`, 28, py);
+            py += 20;
+        }
     }
 
     let lastTime = 0;

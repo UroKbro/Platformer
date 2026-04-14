@@ -255,6 +255,18 @@ function createLevelGenerator() {
        all_platforms.push(ghost);
     }
 
+    const POWER_UP_TYPES = ['doubleDash', 'highJump', 'antiGravity', 'superSpeed', 'giantBox', 'icePhysics'];
+    let powerUpIndex = 0;
+    
+    // Increased spawn probability to 25% and mapped sequentially ensuring a perfect variety
+    all_platforms.forEach(p => {
+        if ((p.type === 'standard' || p.type === 'risk') && chance(0.25)) {
+            p.hasPowerUp = true;
+            p.powerUpType = POWER_UP_TYPES[powerUpIndex % POWER_UP_TYPES.length];
+            powerUpIndex++;
+        }
+    });
+
     return {
       platforms: all_platforms,
       startPos: { x: start.x + start.w / 2 - 25, y: start.y - 50 },
