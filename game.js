@@ -17,33 +17,46 @@ window.onload = function () {
         h: 50,
         vx: 0,
         vy: 0,
-        // movement tuning (tuned for snappy but controlled feel)
-        // accel: how quickly player accelerates toward target speed
+
         accel: 1.6,
         friction: 0.825,
         maxSpeed: 4.5,
-        // brake: how quickly player decelerates when stopping (lower = less instant stop)
         brake: 0.35,
         maxFallSpeed: 10,
         jumpPower: 15,
         onGround: false,
-        lastJumpTime: 0,
-        jumpCooldown: 450, // ms
-        // reduces acceleration in air (less control than ground)
+
         airControl: 0.7,
-        // coyote time and input buffering
-        coyoteTime: 60, // ms
+
+        coyoteTime: 60,
         lastGrounded: 0,
-        jumpBufferTime: 75, // ms
-        lastJumpPress: 0
+        jumpBufferTime: 75,
+        lastJumpPress: 0,
+        jumpCooldown: 450,
+        lastJumpTime: 0,
+
+        // ===== STATE SYSTEM =====
+        state: "air", // grounded | air | dash
+
+        // ===== DASH =====
+        dashRequested: false,
+        dashTime: 0,
+        dashDuration: 120,
+        dashCooldown: 500,
+        lastDashTime: 0,
+        dashSpeed: 12,
+        dashDirX: 1,
+        dashDirY: 0
     };
+
     const gravity = 0.475;
+
     const world = {
         width: 5000,
         height: 2000
     };
 
-   const platforms = createPlatforms(world);
+    const platforms = createPlatforms(world);
 
     const camera = {
         x: 0,
@@ -53,11 +66,16 @@ window.onload = function () {
     const keys = {};
     const margin = 150;
 
+    // INPUT
     window.addEventListener("keydown", (e) => {
         keys[e.key] = true;
-        // Record jump presses for input buffering
+
         if (e.key === "ArrowUp") player.lastJumpPress = Date.now();
-        // Only prevent default for game control keys so page scrolling still works
+
+        if (e.code === "Space") {
+            player.dashRequested = true;
+        }
+
         if ((e.key && e.key.startsWith("Arrow")) || e.code === "Space") {
             e.preventDefault();
         }
@@ -65,67 +83,153 @@ window.onload = function () {
 
     window.addEventListener("keyup", (e) => {
         keys[e.key] = false;
+
+        if (e.code === "Space") {
+            player.dashRequested = false;
+        }
+
         if ((e.key && e.key.startsWith("Arrow")) || e.code === "Space") {
             e.preventDefault();
         }
     });
 
+    function setState(newState) {
+        if (player.state === newState) return;
+
+        player.state = newState;
+
+        if (newState === "dash") {
+            player.dashTime = 0;
+
+            // Determine dash direction from held keys (no upward dash)
+            let dx = 0;
+            let dy = 0;
+            if (keys["ArrowLeft"]) dx -= 1;
+            if (keys["ArrowRight"]) dx += 1;
+            if (keys["ArrowDown"]) dy = 1;
+            if (keys["ArrowUp"]) dy = -1;
+
+            // If no direction held (or only up), dash horizontally in facing direction
+            if (dx === 0 && dy === 0) {
+                dx = player.vx >= 0 ? 1 : -1;
+            }
+
+            // Normalize so diagonal dashes aren't faster
+            const len = Math.sqrt(dx * dx + dy * dy);
+            player.dashDirX = dx / len;
+            player.dashDirY = dy / len;
+
+            player.lastDashTime = Date.now();
+        }
+
+        if (newState === "grounded") {
+            player.dashTime = 0;
+        }
+    }
 
     function update(dt) {
         const prevY = player.y;
+        const now = Date.now();
 
-        // Horizontal input: -1 (left), 0, 1 (right)
         let inputX = 0;
         if (keys["ArrowLeft"]) inputX -= 1;
         if (keys["ArrowRight"]) inputX += 1;
 
-        // ---- Horizontal movement: approach-based, frame-rate aware ----
-        // Use dt (seconds) to scale behavior; keep feel consistent across frame rates
         const scale = Math.min(1, (dt || 0.016) * 60);
         const effectiveAccel = player.accel * (player.onGround ? 1 : player.airControl);
 
-        // Target horizontal velocity based on input
+        if (
+            player.dashRequested &&
+            player.state !== "dash" &&
+            now - player.lastDashTime > player.dashCooldown
+        ) {
+            setState("dash");
+        }
+
+        // ===== DASH STATE =====
+        if (player.state === "dash") {
+            player.dashTime += dt * 1000;
+
+            player.vx = player.dashDirX * player.dashSpeed;
+            player.vy = player.dashDirY * player.dashSpeed;
+
+            player.x += player.vx;
+            player.y += player.vy;
+
+            // collision resolution
+            for (let p of platforms) {
+                if (
+                    player.x < p.x + p.w &&
+                    player.x + player.w > p.x &&
+                    player.y < p.y + p.h &&
+                    player.y + player.h > p.y
+                ) {
+                    // horizontal resolution
+                    if (player.vx > 0) player.x = p.x - player.w;
+                    else if (player.vx < 0) player.x = p.x + p.w;
+                    // vertical resolution
+                    if (player.vy > 0) {
+                        player.y = p.y - player.h;
+                        player.onGround = true;
+                        player.lastGrounded = Date.now();
+                    } else if (player.vy < 0) {
+                        player.y = p.y + p.h;
+                    }
+                    player.vx = 0;
+                    player.vy = 0;
+                }
+            }
+
+            if (player.dashTime >= player.dashDuration) {
+                setState(player.onGround ? "grounded" : "air");
+            }
+
+            return;
+        }
+
+        // ===== NORMAL MOVEMENT =====
         const targetVx = inputX * player.maxSpeed;
 
-        // If changing direction, apply an immediate turn-brake to remove momentum
         if (inputX !== 0 && player.vx !== 0 && Math.sign(inputX) !== Math.sign(player.vx)) {
-            const turnBrake = (player.brake || 0.35) * 2.0 * scale;
+            const turnBrake = player.brake * 2.0 * scale;
             if (Math.abs(player.vx) <= turnBrake) player.vx = 0;
             else player.vx -= Math.sign(player.vx) * turnBrake;
         }
 
-        // Move vx toward targetVx using acceleration or braking depending on direction
         if (player.vx < targetVx) {
-            // accelerate right
             player.vx = Math.min(player.vx + effectiveAccel * scale, targetVx);
         } else if (player.vx > targetVx) {
-            // decelerate/accelerate left
-            const decel = (inputX === 0) ? (player.brake || 0.35) : effectiveAccel;
+            const decel = (inputX === 0) ? player.brake : effectiveAccel;
             if (player.vx - decel * scale < targetVx) player.vx = targetVx;
             else player.vx -= decel * scale;
         }
 
-        // Gentle air damping when airborne and no input
         if (!player.onGround && inputX === 0) player.vx *= 0.992;
 
-        // Clamp horizontal speed
         player.vx = Math.max(-player.maxSpeed, Math.min(player.maxSpeed, player.vx));
 
-        // Jump with coyote time and input buffering
-        const now = Date.now();
-        const jumpPressedRecently = (player.lastJumpPress && now - player.lastJumpPress <= player.jumpBufferTime) || keys["ArrowUp"];
-        if (jumpPressedRecently && (player.onGround || now - player.lastGrounded <= player.coyoteTime) && now - player.lastJumpTime >= player.jumpCooldown) {
+        // ===== JUMP =====
+        const jumpPressedRecently =
+            (player.lastJumpPress && now - player.lastJumpPress <= player.jumpBufferTime)
+            || keys["ArrowUp"];
+
+        if (
+            jumpPressedRecently &&
+            (player.onGround || now - player.lastGrounded <= player.coyoteTime) &&
+            now - player.lastJumpTime >= player.jumpCooldown
+        ) {
             player.vy = -player.jumpPower;
             player.onGround = false;
             player.lastJumpTime = now;
             player.lastJumpPress = 0;
+            setState("air");
         }
 
-        // Gravity and vertical clamp
+        // ===== GRAVITY =====
         player.vy += gravity;
         player.vy = Math.min(player.vy, player.maxFallSpeed);
 
-        // ---- Move X and handle horizontal collisions ----
+        // ===== MOVE X =====
         player.x += player.vx;
 
         for (let p of platforms) {
@@ -135,20 +239,14 @@ window.onload = function () {
                 player.y < p.y + p.h &&
                 player.y + player.h > p.y
             ) {
-                // Horizontal overlap: push out on X and stop horizontal velocity
-                if (player.vx > 0) {
-                    player.x = p.x - player.w;
-                } else if (player.vx < 0) {
-                    player.x = p.x + p.w;
-                }
+                if (player.vx > 0) player.x = p.x - player.w;
+                else if (player.vx < 0) player.x = p.x + p.w;
                 player.vx = 0;
             }
         }
 
-        // ---- Move Y and handle vertical collisions ----
+        // ===== MOVE Y =====
         player.y += player.vy;
-
-        // Reset onGround; will be set if we land this frame
         player.onGround = false;
 
         for (let p of platforms) {
@@ -158,46 +256,36 @@ window.onload = function () {
                 player.y < p.y + p.h &&
                 player.y + player.h > p.y
             ) {
-                if (player.vy > 0) {
-                    // Only land if we were above the platform before moving
-                    if (prevY + player.h <= p.y) {
-                        player.y = p.y - player.h;
-                        player.vy = 0;
-                        player.onGround = true;
-                        player.lastGrounded = Date.now();
-                    } else {
-                        // fallback resolution
-                        player.y = p.y - player.h;
-                        player.vy = 0;
-                    }
+                if (player.vy > 0 && prevY + player.h <= p.y) {
+                    player.y = p.y - player.h;
+                    player.vy = 0;
+                    player.onGround = true;
+                    player.lastGrounded = Date.now();
+                    setState("grounded");
                 } else if (player.vy < 0) {
                     player.y = p.y + p.h;
                     player.vy = 0;
                 }
             }
         }
+
+        if (!player.onGround && player.state === "grounded") {
+            setState("air");
+        }
+
         let screenX = player.x - camera.x;
         let screenY = player.y - camera.y;
 
-        // moving right
-        if (screenX > canvas.width - margin) {
+        if (screenX > canvas.width - margin)
             camera.x = player.x - (canvas.width - margin);
-        }
-
-        // moving left
-        if (screenX < margin) {
+        if (screenX < margin)
             camera.x = player.x - margin;
-        }
 
-        //moving down
-        if (screenY > canvas.height - margin) {
+        if (screenY > canvas.height - margin)
             camera.y = player.y - (canvas.height - margin);
-        }
-
-        // moving up
-        if (screenY < margin) {
+        if (screenY < margin)
             camera.y = player.y - margin;
-        }
+
         camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
         camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
     }
@@ -205,25 +293,25 @@ window.onload = function () {
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // player
-        ctx.fillStyle = "blue";
+        ctx.fillStyle = player.state === "dash" ? "cyan" : "blue";
         ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
 
-        // platforms
         ctx.fillStyle = "green";
         for (let p of platforms) {
             ctx.fillRect(p.x - camera.x, p.y - camera.y, p.w, p.h);
         }
     }
 
-    // frame-timed loop so movement is consistent across different refresh rates
     let lastTime = 0;
+
     function loop(timestamp) {
         if (!lastTime) lastTime = timestamp;
-        const dt = Math.min(0.05, (timestamp - lastTime) / 1000); // clamp to avoid large steps
+        const dt = Math.min(0.05, (timestamp - lastTime) / 1000);
         lastTime = timestamp;
+
         update(dt);
         draw();
+
         requestAnimationFrame(loop);
     }
 

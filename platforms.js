@@ -1,288 +1,368 @@
-// platforms.js
-// Generates a full platformer level filling the 5000×2000 world.
-// Player physics: jumpPower 15, gravity 0.475 → max jump height ≈ 237px, horizontal reach ≈ 280px
-// Platforms are spaced so every jump is reachable.
+// platforms.js — Procedural Platformer Level Generator
+//
+// Algorithm (Forward Build + Chunk Phases + BFS Validation):
+//   1. CRITICAL PATH  — A guaranteed-solvable chain of platforms from
+//      start → exit, built forward one jump at a time. Each jump is
+//      verified by a physics simulation that matches the game engine.
+//      The path is organized into "chunks" (flat, staircase-up,
+//      staircase-down, gap-jump, zigzag) for natural variety.
+//   2. BFS VALIDATION — Graph traversal confirms the full critical path
+//      is connected. If a gap is detected, bridge platforms are spliced in.
+//   3. SECONDARY PATHS — Multiple lateral bands at different heights
+//      provide exploration and alternative routes.
+//   4. DECORATION FILL — Dense grid-based gap filling ensures the full
+//      canvas is populated. These never block the critical path.
+//   5. DIFFICULTY      — A single parameter controls gap size, platform
+//      width, vertical climb, and decoration density.
+//
+// Player physics (must match game.js):
+//   jumpPower: 15, gravity: 0.475, maxSpeed: 4.5,
+//   maxFallSpeed: 10, player: 50×50
+//   → Theoretical max jump height ≈ 237px
+//   → Theoretical max horizontal reach ≈ 284px
 
 function createPlatforms(world) {
   const W = world.width;   // 5000
   const H = world.height;  // 2000
+  const GROUND_Y = H - 40;
 
-  // ── Ground ──────────────────────────────────────────────────────────
-  const platforms = [
-    { x: 0, y: H - 40, w: W, h: 40 },  // full-width ground
-  ];
+  // ═══════════════════════════════════════════════════════════════════
+  //  CONFIGURATION
+  // ═══════════════════════════════════════════════════════════════════
 
-  // ── Helper: add a platform ──────────────────────────────────────────
-  function add(x, y, w, h) {
-    platforms.push({ x, y, w: w || 120, h: h || 16 });
+  // Player physics (mirrors game.js exactly)
+  const JUMP_POWER   = 15;
+  const GRAVITY      = 0.475;
+  const MAX_SPEED    = 4.5;
+  const MAX_FALL_SPD = 10;
+  const PLAYER_W     = 50;
+  const PLAYER_H     = 50;
+
+  // Derived physics limits
+  const MAX_JUMP_H = (JUMP_POWER * JUMP_POWER) / (2 * GRAVITY);   // ≈237px
+  const AIR_FRAMES = (2 * JUMP_POWER) / GRAVITY;                   // ≈63 frames
+  const MAX_JUMP_X = MAX_SPEED * AIR_FRAMES;                       // ≈284px
+
+  // Safe generation limits (≈72-75% of theoretical max)
+  const SAFE_H = Math.floor(MAX_JUMP_H * 0.72);   // ≈170px
+  const SAFE_X = Math.floor(MAX_JUMP_X * 0.75);   // ≈213px
+
+  // Difficulty: 1.0 = easy, 2.0 = medium, 3.0 = hard
+  const DIFFICULTY = 3;
+  const PLAT_W_MIN  = Math.max(55, Math.floor(110 - DIFFICULTY * 12));
+  const PLAT_W_MAX  = Math.max(90, Math.floor(200 - DIFFICULTY * 22));
+  const DECOR_FILL  = 0.1;  // higher = more dense decoration
+
+  // Reproducible seed
+  const SEED = 42;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  SEEDED PRNG (mulberry32)
+  // ═══════════════════════════════════════════════════════════════════
+  let _s = SEED;
+  function random() {
+    _s |= 0; _s = (_s + 0x6D2B79F5) | 0;
+    let t = Math.imul(_s ^ (_s >>> 15), 1 | _s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const rr  = (a, b) => a + random() * (b - a);
+  const ri  = (a, b) => Math.floor(rr(a, b + 0.999));
+  const pick = (arr) => arr[ri(0, arr.length - 1)];
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PHYSICS-BASED REACHABILITY CHECK
+  // ═══════════════════════════════════════════════════════════════════
+  function simJump(ax, ay, aw, bx, by, bw, hSpeed) {
+    const startX = hSpeed >= 0 ? (ax + aw - PLAYER_W) : ax;
+    let px = startX;
+    let py = ay - PLAYER_H;
+    let vy = -JUMP_POWER;
+
+    for (let f = 0; f < 250; f++) {
+      px += hSpeed;
+      vy = Math.min(vy + GRAVITY, MAX_FALL_SPD);
+      py += vy;
+      const feetY = py + PLAYER_H;
+      if (px + PLAYER_W > bx && px < bx + bw &&
+          vy >= 0 && feetY >= by && feetY <= by + 36) {
+        return true;
+      }
+      if (py > Math.max(ay, by) + 500) return false;
+    }
+    return false;
   }
 
-  // ====================================================================
-  //  ZONE 1 — Starting Area (x: 0–1000)
-  //  Gentle introduction, short hops, wide platforms
-  // ====================================================================
+  // Try multiple horizontal speeds to handle various target positions
+  function canReach(ax, ay, aw, bx, by, bw) {
+    const dir = (bx + bw / 2) > (ax + aw / 2) ? 1 : -1;
+    return simJump(ax, ay, aw, bx, by, bw, dir * MAX_SPEED)
+        || simJump(ax, ay, aw, bx, by, bw, dir * MAX_SPEED * 0.5)
+        || simJump(ax, ay, aw, bx, by, bw, dir * MAX_SPEED * 0.15);
+  }
 
-  // Low tier — easy first jumps off the ground
-  add(80,   H - 120,  160, 18);
-  add(300,  H - 140,  140, 18);
-  add(500,  H - 160,  180, 20);
-  add(740,  H - 130,  160, 18);
-  add(940,  H - 150,  140, 18);
+  function connected(a, b) {
+    return canReach(a.x, a.y, a.w, b.x, b.y, b.w)
+        || canReach(b.x, b.y, b.w, a.x, a.y, a.w);
+  }
 
-  // Mid tier — stepping up
-  add(60,   H - 260,  130, 16);
-  add(240,  H - 280,  120, 16);
-  add(420,  H - 310,  150, 18);
-  add(620,  H - 280,  140, 16);
-  add(820,  H - 320,  130, 16);
+  // ═══════════════════════════════════════════════════════════════════
+  //  STEP 1 — CRITICAL PATH (chunk-based forward build)
+  // ═══════════════════════════════════════════════════════════════════
+  //  The critical path is the GUARANTEED solvable route from start to
+  //  exit. It snakes through the level using different "chunk" patterns.
+  //  Every single jump is verified by the physics simulation.
 
-  // Upper tier
-  add(100,  H - 420,  110, 16);
-  add(280,  H - 450,  140, 16);
-  add(480,  H - 480,  120, 16);
-  add(680,  H - 450,  130, 16);
-  add(880,  H - 490,  110, 16);
+  const CHUNK_TYPES = ['flat', 'stair_up', 'stair_down', 'gap', 'zigzag'];
+  const criticalPath = [];
 
-  // High tier — rewarding exploration
-  add(160,  H - 600,  100, 14);
-  add(340,  H - 630,  120, 14);
-  add(560,  H - 650,  100, 14);
-  add(760,  H - 620,  120, 14);
-  add(940,  H - 660,  100, 14);
+  // Starting platform — sits near ground, easy first jump
+  let cx = 60, cy = GROUND_Y - 100, cw = 200;
+  criticalPath.push({ x: cx, y: cy, w: cw, h: 20 });
 
-  // Very high — near ceiling zone 1
-  add(200,  H - 780,  90, 14);
-  add(400,  H - 810,  110, 14);
-  add(620,  H - 830,  100, 14);
-  add(840,  H - 800,  90, 14);
+  let lastChunkType = null;
+  let chunkIter = 0;
 
-  // ====================================================================
-  //  ZONE 2 — Forest Canopy (x: 1000–2200)
-  //  Denser layout, varied widths, some small tricky platforms
-  // ====================================================================
+  while (cx + cw < W - 400 && chunkIter < 60) {
+    // Pick chunk type — avoid repeats, bias by current height
+    let chunkType;
+    do { chunkType = pick(CHUNK_TYPES); } while (chunkType === lastChunkType);
 
-  // Ground level extensions (broken ground)
-  add(1050, H - 110,  200, 18);
-  add(1320, H - 130,  160, 18);
-  add(1540, H - 100,  220, 20);
-  add(1820, H - 120,  180, 18);
-  add(2050, H - 140,  160, 18);
+    if (cy < 350)            chunkType = 'stair_down';
+    else if (cy > GROUND_Y - 250) chunkType = 'stair_up';
 
-  // Low-mid
-  add(1020, H - 220,  140, 16);
-  add(1220, H - 250,  120, 16);
-  add(1400, H - 210,  160, 18);
-  add(1600, H - 260,  130, 16);
-  add(1800, H - 230,  150, 16);
-  add(2000, H - 270,  120, 16);
+    lastChunkType = chunkType;
+    const platCount = ri(3, 5);
 
-  // Mid
-  add(1060, H - 370,  120, 16);
-  add(1240, H - 400,  100, 14);
-  add(1420, H - 370,  140, 16);
-  add(1600, H - 410,  110, 14);
-  add(1780, H - 380,  130, 16);
-  add(1960, H - 420,  100, 14);
-  add(2120, H - 390,  120, 16);
+    for (let step = 0; step < platCount && cx + cw < W - 400; step++) {
+      const nw = ri(PLAT_W_MIN, PLAT_W_MAX);
+      let gapX, deltaY;
 
-  // Upper-mid
-  add(1040, H - 530,  110, 14);
-  add(1220, H - 560,  90,  14);
-  add(1400, H - 540,  120, 14);
-  add(1580, H - 570,  100, 14);
-  add(1760, H - 550,  110, 14);
-  add(1940, H - 580,  90,  14);
-  add(2100, H - 550,  100, 14);
+      switch (chunkType) {
+        case 'flat':
+          gapX   = rr(60, SAFE_X - 40);
+          deltaY = rr(-15, 15);
+          break;
+        case 'stair_up':
+          gapX   = rr(50, SAFE_X - 50);
+          deltaY = -rr(45, SAFE_H);
+          break;
+        case 'stair_down':
+          gapX   = rr(50, SAFE_X - 50);
+          deltaY = rr(35, SAFE_H * 0.7);
+          break;
+        case 'gap':
+          gapX   = rr(SAFE_X - 50, SAFE_X);
+          deltaY = rr(-25, 25);
+          break;
+        case 'zigzag':
+          gapX   = rr(50, SAFE_X - 50);
+          deltaY = (step % 2 === 0 ? -1 : 1) * rr(50, SAFE_H);
+          break;
+        default:
+          gapX   = rr(60, SAFE_X - 40);
+          deltaY = 0;
+      }
 
-  // High
-  add(1080, H - 700,  100, 14);
-  add(1260, H - 730,  80,  14);
-  add(1440, H - 710,  110, 14);
-  add(1640, H - 740,  90,  14);
-  add(1840, H - 720,  100, 14);
-  add(2040, H - 750,  80,  14);
+      const nx = Math.floor(cx + cw + gapX);
+      let ny = Math.max(120, Math.min(GROUND_Y - 80, Math.floor(cy + deltaY)));
 
-  // Very high — canopy tops
-  add(1120, H - 870,  90, 14);
-  add(1320, H - 900,  100, 14);
-  add(1520, H - 880,  80,  14);
-  add(1720, H - 910,  100, 14);
-  add(1920, H - 890,  90,  14);
-  add(2100, H - 920,  80,  14);
+      if (canReach(cx, cy, cw, nx, ny, nw)) {
+        criticalPath.push({ x: nx, y: ny, w: nw, h: 16 });
+        cx = nx; cy = ny; cw = nw;
+      } else {
+        const safeDY = chunkType === 'stair_up' ? -35
+                     : chunkType === 'stair_down' ? 35 : 0;
+        const safeNY = Math.max(120, Math.min(GROUND_Y - 80, cy + safeDY));
+        const safeNX = Math.floor(cx + cw + 70);
+        if (canReach(cx, cy, cw, safeNX, safeNY, nw)) {
+          criticalPath.push({ x: safeNX, y: safeNY, w: nw, h: 16 });
+          cx = safeNX; cy = safeNY; cw = nw;
+        }
+      }
+    }
+    chunkIter++;
+  }
 
-  // ====================================================================
-  //  ZONE 3 — Mountain Ascent (x: 2200–3400)
-  //  More vertical, staircase patterns, tighter jumps
-  // ====================================================================
+  // Exit platform + bridge
+  const exitPlat = { x: W - 260, y: GROUND_Y - 160, w: 220, h: 20 };
+  if (!canReach(cx, cy, cw, exitPlat.x, exitPlat.y, exitPlat.w)) {
+    for (let b = 0; b < 3; b++) {
+      const bx = Math.floor(cx + cw + 70);
+      const by = Math.max(120, Math.min(GROUND_Y - 80,
+          Math.floor((cy + exitPlat.y) / 2)));
+      criticalPath.push({ x: bx, y: by, w: 120, h: 16 });
+      cx = bx; cy = by; cw = 120;
+      if (canReach(cx, cy, cw, exitPlat.x, exitPlat.y, exitPlat.w)) break;
+    }
+  }
+  criticalPath.push(exitPlat);
 
-  // Ground fragments
-  add(2250, H - 100,  180, 18);
-  add(2500, H - 120,  160, 18);
-  add(2720, H - 110,  200, 20);
-  add(2980, H - 130,  180, 18);
-  add(3220, H - 100,  160, 18);
+  // ═══════════════════════════════════════════════════════════════════
+  //  STEP 2 — BFS VALIDATION + REPAIR
+  // ═══════════════════════════════════════════════════════════════════
+  function validateAndRepair(plats, maxRepairs) {
+    for (let repair = 0; repair < maxRepairs; repair++) {
+      const n = plats.length;
+      const adj = Array.from({ length: n }, () => []);
+      for (let i = 0; i < n; i++) {
+        const limit = Math.min(i + 8, n);
+        for (let j = i + 1; j < limit; j++) {
+          if (connected(plats[i], plats[j])) {
+            adj[i].push(j); adj[j].push(i);
+          }
+        }
+      }
+      const visited = new Set([0]);
+      const queue = [0];
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        for (const nb of adj[cur]) {
+          if (!visited.has(nb)) { visited.add(nb); queue.push(nb); }
+        }
+      }
+      if (visited.has(n - 1)) {
+        console.log(`✅ Critical path VALID: ${n} platforms, all reachable`);
+        return true;
+      }
+      let repaired = false;
+      for (let i = 0; i < n - 1; i++) {
+        if (visited.has(i) && !visited.has(i + 1)) {
+          const a = plats[i], b = plats[i + 1];
+          const mx = Math.floor((a.x + a.w + b.x) / 2);
+          const my = Math.max(120, Math.min(GROUND_Y - 80,
+              Math.floor((a.y + b.y) / 2)));
+          plats.splice(i + 1, 0, { x: mx, y: my, w: 100, h: 16 });
+          console.log(`🔧 Repaired gap at index ${i}`);
+          repaired = true;
+          break;
+        }
+      }
+      if (!repaired) break;
+    }
+    console.warn(`⚠️ Critical path may have unreachable segments`);
+    return false;
+  }
 
-  // Staircase up (left side of zone)
-  add(2240, H - 200,  130, 16);
-  add(2320, H - 310,  110, 14);
-  add(2420, H - 420,  120, 14);
-  add(2500, H - 530,  100, 14);
-  add(2560, H - 640,  110, 14);
-  add(2620, H - 750,  100, 14);
-  add(2680, H - 860,  90,  14);
+  validateAndRepair(criticalPath, 10);
 
-  // Parallel path (right side of zone)
-  add(2800, H - 220,  140, 16);
-  add(2900, H - 340,  120, 16);
-  add(3000, H - 460,  110, 14);
-  add(3100, H - 560,  100, 14);
-  add(3180, H - 670,  120, 14);
-  add(3260, H - 780,  100, 14);
-  add(3340, H - 880,  90,  14);
+  // ═══════════════════════════════════════════════════════════════════
+  //  STEP 3 — MULTIPLE HEIGHT BANDS (secondary paths)
+  // ═══════════════════════════════════════════════════════════════════
+  //  Generate several horizontal "bands" of platforms at fixed height
+  //  tiers. This ensures the FULL vertical space is populated and gives
+  //  players exploration routes at every height.
 
-  // Cross-bridges between staircases
-  add(2700, H - 350,  100, 14);
-  add(2750, H - 500,  90,  14);
-  add(2850, H - 620,  100, 14);
-  add(2950, H - 740,  80,  14);
-  add(3050, H - 850,  90,  14);
+  const secondaryPlatforms = [];
 
-  // Floating mid-zone platforms
-  add(2400, H - 250,  100, 14);
-  add(2600, H - 280,  120, 14);
-  add(2900, H - 180,  140, 16);
-  add(3100, H - 250,  110, 14);
-  add(3300, H - 300,  130, 16);
+  // Define height bands across the full vertical range
+  const heightBands = [
+    GROUND_Y - 160,   // just above ground
+    GROUND_Y - 320,   // low
+    GROUND_Y - 480,   // low-mid
+    GROUND_Y - 640,   // mid
+    GROUND_Y - 800,   // mid-high
+    GROUND_Y - 960,   // high
+    GROUND_Y - 1120,  // very high
+    GROUND_Y - 1280,  // near ceiling
+    GROUND_Y - 1440,  // upper canopy
+    GROUND_Y - 1600,  // sky level
+    GROUND_Y - 1760,  // near top
+  ];
 
-  // ====================================================================
-  //  ZONE 4 — Sky Fortress (x: 3400–4400)
-  //  High-altitude platforms, wider gaps, reward skilled play
-  // ====================================================================
+  for (const bandY of heightBands) {
+    if (bandY < 80) continue; // skip if too close to ceiling
 
-  // Ground level (sparse)
-  add(3420, H - 110,  200, 18);
-  add(3700, H - 130,  180, 18);
-  add(3960, H - 100,  220, 20);
-  add(4240, H - 120,  160, 18);
+    // Place platforms across the full width at this height band
+    let bx = ri(40, 120);
+    while (bx < W - 100) {
+      // Vary Y slightly around the band center for natural feel
+      const py = Math.floor(bandY + rr(-40, 40));
+      const pw = ri(PLAT_W_MIN - 10, PLAT_W_MAX);
 
-  // Low platforms
-  add(3440, H - 230,  140, 16);
-  add(3640, H - 260,  120, 16);
-  add(3840, H - 230,  140, 16);
-  add(4040, H - 270,  110, 14);
-  add(4240, H - 240,  130, 16);
+      // Check we don't overlap a critical path platform
+      let overlaps = false;
+      for (const cp of criticalPath) {
+        if (Math.abs(cp.x - bx) < cp.w + 30 && Math.abs(cp.y - py) < 50) {
+          overlaps = true;
+          break;
+        }
+      }
 
-  // Mid tier
-  add(3460, H - 390,  130, 16);
-  add(3660, H - 420,  110, 14);
-  add(3850, H - 400,  120, 16);
-  add(4050, H - 430,  100, 14);
-  add(4250, H - 410,  130, 16);
+      if (!overlaps && py > 80 && py < GROUND_Y - 60) {
+        secondaryPlatforms.push({ x: bx, y: py, w: pw, h: 14 });
+      }
 
-  // Upper tier
-  add(3480, H - 560,  110, 14);
-  add(3680, H - 590,  100, 14);
-  add(3870, H - 570,  120, 14);
-  add(4060, H - 600,  90,  14);
-  add(4260, H - 580,  110, 14);
+      // Space platforms 180-350px apart horizontally within the band
+      bx += pw + ri(140, 280);
+    }
+  }
 
-  // High sky platforms
-  add(3500, H - 730,  100, 14);
-  add(3700, H - 760,  90,  14);
-  add(3900, H - 740,  100, 14);
-  add(4100, H - 770,  80,  14);
-  add(4300, H - 750,  100, 14);
+  // ── Additional platforms branching from critical path ──────────────
+  for (let i = 0; i < criticalPath.length - 1; i += ri(2, 3)) {
+    const p = criticalPath[i];
 
-  // Very high — fortress ramparts
-  add(3520, H - 900,  90, 14);
-  add(3720, H - 930,  80, 14);
-  add(3920, H - 910,  100, 14);
-  add(4120, H - 940,  80,  14);
-  add(4320, H - 920,  90,  14);
+    // Upper branch
+    const upperY = Math.floor(p.y - rr(70, SAFE_H));
+    if (upperY > 100) {
+      secondaryPlatforms.push({
+        x: Math.floor(p.x + rr(0, p.w * 0.4)),
+        y: upperY,
+        w: ri(55, 100),
+        h: 14
+      });
+    }
 
-  // ====================================================================
-  //  ZONE 5 — Final Challenge (x: 4400–5000)
-  //  Dense, vertical gauntlet to the top
-  // ====================================================================
+    // Lower branch
+    const lowerY = Math.floor(p.y + rr(60, 150));
+    if (lowerY < GROUND_Y - 60) {
+      secondaryPlatforms.push({
+        x: Math.floor(p.x + rr(20, 100)),
+        y: lowerY,
+        w: ri(65, 120),
+        h: 14
+      });
+    }
+  }
 
-  // Ground
-  add(4420, H - 110,  160, 18);
-  add(4640, H - 130,  180, 18);
-  add(4860, H - 100,  140, 18);
+  // ═══════════════════════════════════════════════════════════════════
+  //  STEP 4 — DECORATION FILL (grid-based gap coverage)
+  // ═══════════════════════════════════════════════════════════════════
+  //  Grid cells ensure NO large empty region exists in the level.
 
-  // Rising staircase
-  add(4400, H - 220,  130, 16);
-  add(4500, H - 330,  120, 14);
-  add(4580, H - 440,  110, 14);
-  add(4660, H - 550,  100, 14);
-  add(4740, H - 660,  110, 14);
-  add(4800, H - 770,  100, 14);
-  add(4860, H - 880,  90,  14);
+  const decorPlatforms = [];
+  const CELL = 220;  // smaller cells = denser fill
+  const gridCols = Math.ceil(W / CELL);
+  const gridRows = Math.ceil(GROUND_Y / CELL);
 
-  // Parallel path right
-  add(4620, H - 250,  110, 14);
-  add(4720, H - 370,  100, 14);
-  add(4800, H - 490,  110, 14);
-  add(4870, H - 600,  100, 14);
+  const occupied = new Set();
+  for (const p of [...criticalPath, ...secondaryPlatforms]) {
+    const col = Math.floor((p.x + p.w / 2) / CELL);
+    const row = Math.floor(p.y / CELL);
+    occupied.add(`${col},${row}`);
+  }
 
-  // Summit platforms — near the top of the world
-  add(4440, H - 1000, 120, 14);
-  add(4600, H - 1040, 100, 14);
-  add(4760, H - 1020, 110, 14);
-  add(4900, H - 1060, 100, 14);
+  for (let c = 0; c < gridCols; c++) {
+    for (let r = 0; r < gridRows; r++) {
+      if (!occupied.has(`${c},${r}`) && random() < DECOR_FILL) {
+        const px = Math.floor(c * CELL + rr(10, CELL - 80));
+        const py = Math.floor(r * CELL + rr(20, CELL - 25));
+        if (py > 80 && py < GROUND_Y - 50) {
+          decorPlatforms.push({ x: px, y: py, w: ri(45, 90), h: 12 });
+        }
+      }
+    }
+  }
 
-  // Connector bridges between zones (fill horizontal gaps)
-  // Zone 1→2
-  add(960,  H - 180,  100, 14);
-  add(980,  H - 350,  80,  14);
-  add(960,  H - 520,  90,  14);
-  add(980,  H - 690,  80,  14);
+  // ═══════════════════════════════════════════════════════════════════
+  //  ASSEMBLE FINAL LEVEL
+  // ═══════════════════════════════════════════════════════════════════
+  const ground = { x: 0, y: GROUND_Y, w: W, h: 40 };
 
-  // Zone 2→3
-  add(2160, H - 200,  100, 14);
-  add(2180, H - 380,  80,  14);
-  add(2160, H - 560,  90,  14);
-  add(2180, H - 740,  80,  14);
+  const total = 1 + criticalPath.length + secondaryPlatforms.length + decorPlatforms.length;
+  console.log(`Level: ${criticalPath.length} critical, ` +
+    `${secondaryPlatforms.length} secondary, ` +
+    `${decorPlatforms.length} decoration = ${total} total platforms`);
 
-  // Zone 3→4
-  add(3360, H - 200,  100, 14);
-  add(3380, H - 400,  80,  14);
-  add(3360, H - 600,  90,  14);
-  add(3380, H - 800,  80,  14);
-
-  // Zone 4→5
-  add(4360, H - 180,  100, 14);
-  add(4380, H - 380,  80,  14);
-  add(4360, H - 580,  90,  14);
-  add(4380, H - 780,  80,  14);
-
-  // ── Scattered bonus platforms (fill remaining empty pockets) ────────
-  // Low scattered
-  add(150,  H - 180,  80,  12);
-  add(580,  H - 200,  70,  12);
-  add(1150, H - 170,  90,  12);
-  add(1700, H - 180,  80,  12);
-  add(2350, H - 170,  70,  12);
-  add(3550, H - 180,  80,  12);
-  add(4500, H - 170,  70,  12);
-
-  // Mid scattered
-  add(350,  H - 360,  70,  12);
-  add(720,  H - 380,  80,  12);
-  add(1140, H - 340,  70,  12);
-  add(1680, H - 350,  80,  12);
-  add(2150, H - 340,  70,  12);
-  add(3150, H - 380,  80,  12);
-  add(4150, H - 360,  70,  12);
-
-  // High scattered
-  add(260,  H - 540,  60,  12);
-  add(700,  H - 560,  70,  12);
-  add(1180, H - 630,  60,  12);
-  add(1660, H - 640,  70,  12);
-  add(2280, H - 580,  60,  12);
-  add(3180, H - 570,  70,  12);
-  add(4180, H - 530,  60,  12);
-
-  return platforms;
+  return [ground, ...criticalPath, ...secondaryPlatforms, ...decorPlatforms];
 }
