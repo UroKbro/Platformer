@@ -1,180 +1,181 @@
-// platforms.js — Cohesive Multi-Path Level Generator
-//
-// New Features:
-//   1. WEAVING PATHS — Two parallel standard paths that diverge and rejoin.
-//   2. STRUCTURAL BEAMS — Vertical background 'pylons' that visually anchor platforms.
-//   3. BACKGROUND SCENERY — Ghost platforms (non-colliding) to fill depth.
-//   4. COHESION — Paths are no longer isolated; they cross and overlap visually.
-
 function createPlatforms(world) {
   const W = world.width;
   const H = world.height;
   const GROUND_Y = H - 40;
 
-  // Physics constants (for reachability simulation)
-  const JUMP_POWER   = 15, GRAVITY = 0.475, MAX_SPEED = 4.5;
-  const MAX_JUMP_H   = (JUMP_POWER * JUMP_POWER) / (2 * GRAVITY);
-  const AIR_TIME     = (2 * JUMP_POWER) / GRAVITY;
-  const MAX_JUMP_X   = MAX_SPEED * AIR_TIME;
-  const PLAYER_W = 50, PLAYER_H = 50;
+  const PLAYER_W = 50;
+  const JUMP_POWER = 15;
+  const GRAVITY = 0.475;
+  const MAX_SPEED = 4.5;
+  const DASH_SPEED = 12;
+  const DASH_DURATION_MS = 120;
 
-  // PRNG
-  let _s = 88; // New seed for more variety
+  const AIR_TIME = (2 * JUMP_POWER) / GRAVITY;
+  const JUMP_DISTANCE = MAX_SPEED * AIR_TIME;
+  const DASH_DISTANCE = DASH_SPEED * (DASH_DURATION_MS / 1000);
+
+  const STANDARD_GAP = Math.floor(JUMP_DISTANCE * 0.75);
+  const RISK_CHAIN_GAP = Math.floor((JUMP_DISTANCE + DASH_DISTANCE) * 0.9);
+  const MAX_RISK_VERTICAL_STEP = 130;
+
+  let seed = 1337;
   function random() {
-    _s |= 0; _s = (_s + 0x6D2B79F5) | 0;
-    let t = Math.imul(_s ^ (_s >>> 15), 1 | _s);
+    seed |= 0;
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
+
   const rr = (a, b) => a + random() * (b - a);
   const ri = (a, b) => Math.floor(rr(a, b + 0.999));
 
-  // Simulators
-  function simJump(ax, ay, aw, bx, by, bw, hSpeed) {
-    let px = hSpeed >= 0 ? (ax + aw - PLAYER_W) : ax;
-    let py = ay - PLAYER_H, vy = -JUMP_POWER;
-    for (let f = 0; f < 300; f++) {
-      px += hSpeed; vy = Math.min(vy + GRAVITY, 10); py += vy;
-      if (px + PLAYER_W > bx && px < bx + bw && vy >= 0 && py + PLAYER_H >= by && py + PLAYER_H <= by + 36) return true;
-      if (py > Math.max(ay, by) + 600) return false;
-    }
-    return false;
-  }
-  const canReach = (ax, ay, aw, bx, by, bw) => simJump(ax, ay, aw, bx, by, bw, (bx > ax ? 1 : -1) * MAX_SPEED);
-
   const platforms = [];
+  const standardPath = [];
+  const riskPath = [];
 
-  // ── Step 0: Ground ────────────────────────────────────────────────
-  platforms.push({ x: 0, y: GROUND_Y, w: W, h: 40, type: 'ground' });
-
-  // ── Step 1: Weaving Main Paths (Main A and Main B) ────────────────
-  const pathA = [], pathB = [];
-  let ax = 60, ay = GROUND_Y - 120, aw = 250;
-  let bx = 60, by = GROUND_Y - 120, bw = 250;
-  
-  const startPlat = { x: 60, y: GROUND_Y - 120, w: 260, h: ri(20, 28), type: 'standard' };
-  platforms.push(startPlat);
-  pathA.push(startPlat); pathB.push(startPlat);
-
-  while (ax + aw < W - 400 || bx + bw < W - 400) {
-    // Generate next for Path A (Higher road)
-    if (ax + aw < W - 400) {
-      const nw = ri(120, 240), gap = rr(0.5, 0.7) * MAX_JUMP_X;
-      const nx = Math.floor(ax + aw + gap);
-      const ny = Math.max(GROUND_Y - 450, Math.min(GROUND_Y - 150, Math.floor(ay + rr(-60, 40))));
-      if (canReach(ax, ay, aw, nx, ny, nw)) {
-        const p = { x: nx, y: ny, w: nw, h: ri(18, 26), type: 'standard' };
-        platforms.push(p); pathA.push(p);
-        ax = nx; ay = ny; aw = nw;
-      } else { ax += 100; } // skip if break
-    }
-
-    // Generate next for Path B (Lower/Middle road) - sometimes rejoins A
-    if (bx + bw < W - 400) {
-      const nw = ri(140, 260), gap = rr(0.4, 0.6) * MAX_JUMP_X;
-      const nx = Math.floor(bx + bw + gap);
-      const ny = Math.max(GROUND_Y - 300, Math.min(GROUND_Y - 100, Math.floor(by + rr(-30, 60))));
-      
-      // Occasionally try to reach back to Path A to create a loop
-      const targetA = pathA[pathA.length - 1];
-      if (random() > 0.8 && canReach(bx, by, bw, targetA.x, targetA.y, targetA.w)) {
-        bx = targetA.x; by = targetA.y; bw = targetA.w;
-      } else if (canReach(bx, by, bw, nx, ny, nw)) {
-        const p = { x: nx, y: ny, w: nw, h: ri(18, 26), type: 'standard' };
-        platforms.push(p); pathB.push(p);
-        bx = nx; by = ny; bw = nw;
-      } else { bx += 100; }
-    }
+  function addPlatform(platform, path) {
+    platforms.push(platform);
+    if (path) path.push(platform);
+    return platform;
   }
 
-  // ── Step 2: High-Risk Intersections ──────────────────────────────
-  // Place risk pips that bridge between Path A and Path B
-  for (let i = 2; i < pathA.length - 2; i += 3) {
-    const pA = pathA[i];
-    const pB = pathB[Math.min(i, pathB.length - 1)];
-    if (Math.abs(pA.y - pB.y) > 150) {
-        // Vertical bridge of pips
-        let curY = pB.y - 70;
-        const bridgeX = (pA.x + pB.x) / 2;
-        while (curY > pA.y + 40) {
-            platforms.push({ x: bridgeX + rr(-20, 20), y: curY, w: 50, h: 12, type: 'risk' });
-            curY -= 80;
-        }
-    }
+  function makeStandardSegment(prev, index) {
+    const w = ri(180, 280);
+    const gap = ri(Math.floor(STANDARD_GAP * 0.82), Math.floor(STANDARD_GAP * 0.98));
+    const x = prev.x + prev.w + gap;
+    const yShift = ri(-45, 35);
+    const minY = GROUND_Y - 320;
+    const maxY = GROUND_Y - 120;
+    const y = Math.max(minY, Math.min(maxY, prev.y + yShift));
+
+    return {
+      x,
+      y,
+      w,
+      h: ri(20, 28),
+      type: "standard",
+      segmentIndex: index
+    };
   }
 
-  // ── Step 3: Structural Scenery (Cohesion) ────────────────────────
-  // Add vertical beams that visually "hold" platforms
-  const solidPlats = platforms.slice(1); // skip ground
-  solidPlats.forEach(p => {
-    if (random() > 0.6 && p.type === 'standard') {
-        const beamW = ri(10, 20);
-        platforms.push({
-            x: p.x + p.w / 2 - beamW / 2,
-            y: p.y + p.h,
-            w: beamW,
-            h: GROUND_Y - (p.y + p.h),
-            isBackground: true
-        });
+  function addRiskBranch(anchor, branchIndex) {
+    const branch = [];
+    const branchCount = ri(3, 4);
+    let prevX = anchor.x + anchor.w - 18;
+    let prevY = anchor.y;
+
+    for (let i = 0; i < branchCount; i++) {
+      const stepX = Math.floor(RISK_CHAIN_GAP * rr(0.82, 0.94));
+      const stepY = ri(70, MAX_RISK_VERTICAL_STEP);
+      const pip = {
+        x: prevX + stepX,
+        y: prevY - stepY,
+        w: ri(48, 64),
+        h: 14,
+        type: i === 1 ? "crumble" : "risk",
+        branchIndex,
+        branchStep: i
+      };
+
+      addPlatform(pip, riskPath);
+      branch.push(pip);
+      prevX = pip.x;
+      prevY = pip.y;
     }
+
+    const reward = addPlatform(
+      {
+        x: prevX + ri(80, 120),
+        y: prevY - ri(20, 45),
+        w: 160,
+        h: 18,
+        type: "reward",
+        branchIndex
+      },
+      riskPath
+    );
+
+    return { branch, reward };
+  }
+
+  platforms.push({ x: 0, y: GROUND_Y, w: W, h: 40, type: "ground" });
+
+  const startPlatform = addPlatform(
+    {
+      x: 70,
+      y: GROUND_Y - 130,
+      w: 280,
+      h: 28,
+      type: "standard",
+      segmentIndex: 0,
+      isStart: true
+    },
+    standardPath
+  );
+
+  let current = startPlatform;
+  let segmentIndex = 1;
+  const branchPlan = [];
+
+  while (current.x + current.w < W - 700) {
+    const next = makeStandardSegment(current, segmentIndex);
+    addPlatform(next, standardPath);
+
+    if (segmentIndex % 4 === 0 && next.x < W - 1400) {
+      branchPlan.push({
+        anchor: current,
+        rejoin: next,
+        branchIndex: branchPlan.length
+      });
+    }
+
+    current = next;
+    segmentIndex++;
+  }
+
+  branchPlan.forEach(({ anchor, rejoin, branchIndex }) => {
+    const { reward } = addRiskBranch(anchor, branchIndex);
+
+    addPlatform(
+      {
+        x: reward.x + reward.w + ri(90, 120),
+        y: reward.y + ri(40, 70),
+        w: 190,
+        h: 20,
+        type: "riskReset",
+        branchIndex
+      },
+      riskPath
+    );
+
+    addPlatform(
+      {
+        x: rejoin.x - ri(70, 110),
+        y: rejoin.y - ri(12, 24),
+        w: 120,
+        h: 16,
+        type: "shortcut",
+        branchIndex
+      },
+      riskPath
+    );
   });
 
-  // ── Step 4: Background Scenery (Depth) ───────────────────────────
-  // Add faded ghost platforms to fill negative space
-  for (let i = 0; i < 15; i++) {
-    platforms.push({
-        x: rr(0, W),
-        y: rr(100, GROUND_Y - 200),
-        w: rr(200, 500),
-        h: rr(5, 15),
-        isBackground: true
-    });
-  }
+  const exitX = W - 340;
+  const exitY = Math.min(current.y, GROUND_Y - 140);
 
-  // ── Step 5: Dead-Ends and Useless Fluff ─────────────────────────────
-  // Sparse but intentional dead ends branching off
-  for (let i = 4; i < pathA.length - 4; i += 6) {
-    const anchor = pathA[i];
-    const deX = anchor.x + rr(100, 200);
-    const deY = anchor.y - rr(150, 250);
-    platforms.push({ x: deX, y: deY, w: 80, h: 15, type: 'deadend' });
-  }
-
-  // Generate a bunch of varying useless platforms that are accessible
-  const numFluffClusters = 12;
-  for (let i = 0; i < numFluffClusters; i++) {
-    // Pick a random anchor from pathA or pathB
-    const sourcePath = random() > 0.5 ? pathA : pathB;
-    if (sourcePath.length === 0) continue;
-    const anchorIdx = ri(0, sourcePath.length - 1);
-    const anchor = sourcePath[anchorIdx];
-
-    let cx = anchor.x;
-    let cy = anchor.y;
-    let cw = anchor.w;
-
-    const chainLen = ri(2, 6);
-    for (let c = 0; c < chainLen; c++) {
-      const pw = ri(30, 200); // highly varying width
-      const ph = ri(10, 40);  // highly varying height
-      const gapX = rr(0.2, 0.7) * MAX_JUMP_X * (random() > 0.5 ? 1 : -1); // can go backward or forward
-      const dropY = rr(-150, 150); // up or down
-
-      const nx = Math.floor(cx + (gapX > 0 ? cw : -pw) + gapX);
-      const ny = Math.max(100, Math.min(GROUND_Y - 50, Math.floor(cy + dropY)));
-
-      // Ensure it is accessible from the previous platform in the chain
-      if (canReach(cx, cy, cw, nx, ny, pw) || canReach(nx, ny, pw, cx, cy, cw)) {
-        platforms.push({ x: nx, y: ny, w: pw, h: ph, type: 'deadend' });
-        cx = nx;
-        cy = ny;
-        cw = pw;
-      }
-    }
-  }
-
-  // ── Step 6: Exit platform ─────────────────────────────────────────
-  platforms.push({ x: W - 320, y: GROUND_Y - 140, w: 300, h: 30, type: 'standard' });
+  addPlatform(
+    {
+      x: exitX,
+      y: exitY,
+      w: 300,
+      h: 30,
+      type: "exit",
+      isExit: true
+    },
+    standardPath
+  );
 
   return platforms;
 }

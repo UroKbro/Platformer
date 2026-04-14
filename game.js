@@ -58,7 +58,15 @@ window.onload = function () {
         height: 2000
     };
 
-    const platforms = createPlatforms(world);
+    const platforms = createPlatforms(world).map((platform, index) => ({
+        ...platform,
+        id: index,
+        crumbleDelay: platform.type === "crumble" ? 500 : 0,
+        crumbleResetDelay: platform.type === "crumble" ? 2400 : 0,
+        crumbleState: platform.type === "crumble" ? "idle" : "stable",
+        crumbleTriggeredAt: 0,
+        respawnAt: 0
+    }));
 
     const camera = {
         x: 0,
@@ -67,6 +75,41 @@ window.onload = function () {
 
     const keys = {};
     const margin = 150;
+
+    function isPlatformSolid(platform) {
+        if (platform.isBackground) return false;
+        if (platform.type === "crumble" && platform.crumbleState === "hidden") return false;
+        return true;
+    }
+
+    function triggerCrumble(platform) {
+        if (platform.type !== "crumble") return;
+        if (platform.crumbleState !== "idle") return;
+
+        platform.crumbleState = "warning";
+        platform.crumbleTriggeredAt = Date.now();
+        platform.respawnAt = 0;
+    }
+
+    function updateCrumblePlatforms(now) {
+        for (const platform of platforms) {
+            if (platform.type !== "crumble") continue;
+
+            if (
+                platform.crumbleState === "warning" &&
+                now - platform.crumbleTriggeredAt >= platform.crumbleDelay
+            ) {
+                platform.crumbleState = "hidden";
+                platform.respawnAt = now + platform.crumbleResetDelay;
+            }
+
+            if (platform.crumbleState === "hidden" && now >= platform.respawnAt) {
+                platform.crumbleState = "idle";
+                platform.crumbleTriggeredAt = 0;
+                platform.respawnAt = 0;
+            }
+        }
+    }
 
     // INPUT
     window.addEventListener("keydown", (e) => {
@@ -133,6 +176,8 @@ window.onload = function () {
         const prevY = player.y;
         const now = Date.now();
 
+        updateCrumblePlatforms(now);
+
         let inputX = 0;
         if (keys["ArrowLeft"]) inputX -= 1;
         if (keys["ArrowRight"]) inputX += 1;
@@ -169,7 +214,7 @@ window.onload = function () {
 
             // collision resolution
             for (let p of platforms) {
-                if (p.isBackground) continue;
+                if (!isPlatformSolid(p)) continue;
                 if (
                     player.x < p.x + p.w &&
                     player.x + player.w > p.x &&
@@ -184,6 +229,7 @@ window.onload = function () {
                         player.y = p.y - player.h;
                         player.onGround = true;
                         player.lastGrounded = Date.now();
+                        triggerCrumble(p);
                     } else if (player.vy < 0) {
                         player.y = p.y + p.h;
                     }
@@ -245,7 +291,7 @@ window.onload = function () {
         player.x += player.vx;
 
         for (let p of platforms) {
-            if (p.isBackground) continue;
+            if (!isPlatformSolid(p)) continue;
             if (
                 player.x < p.x + p.w &&
                 player.x + player.w > p.x &&
@@ -263,7 +309,7 @@ window.onload = function () {
         player.onGround = false;
 
         for (let p of platforms) {
-            if (p.isBackground) continue;
+            if (!isPlatformSolid(p)) continue;
             if (
                 player.x < p.x + p.w &&
                 player.x + player.w > p.x &&
@@ -275,6 +321,7 @@ window.onload = function () {
                     player.vy = 0;
                     player.onGround = true;
                     player.lastGrounded = Date.now();
+                    triggerCrumble(p);
                     setState("grounded");
                 } else if (player.vy < 0) {
                     player.y = p.y + p.h;
@@ -307,21 +354,62 @@ window.onload = function () {
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        for (let p of platforms) {
+            if (p.type === "crumble" && p.crumbleState === "hidden") continue;
+
+            let drawX = p.x - camera.x;
+            const drawY = p.y - camera.y;
+
+            if (p.type === "crumble" && p.crumbleState === "warning") {
+                drawX += Math.sin(Date.now() / 30 + p.id) * 2;
+            }
+
+            if (p.type === "ground") {
+                ctx.fillStyle = "#245C24";
+            } else if (p.type === "risk") {
+                ctx.fillStyle = "#FF8C42";
+            } else if (p.type === "crumble") {
+                const flash = Math.floor(Date.now() / 90) % 2 === 0;
+                ctx.fillStyle = p.crumbleState === "warning"
+                    ? (flash ? "#FF4D4D" : "#FFE066")
+                    : "#C7792B";
+            } else if (p.type === "reward") {
+                ctx.fillStyle = "#FFD23F";
+            } else if (p.type === "riskReset" || p.type === "shortcut") {
+                ctx.fillStyle = "#4CC9F0";
+            } else if (p.type === "exit") {
+                ctx.fillStyle = "#9B5DE5";
+            } else {
+                ctx.fillStyle = "#1B7A1B";
+            }
+
+            ctx.fillRect(drawX, drawY, p.w, p.h);
+
+            if (p.type === "reward") {
+                ctx.strokeStyle = "#FFF3B0";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(drawX - 2, drawY - 2, p.w + 4, p.h + 4);
+            }
+
+            if (p.type === "exit") {
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fillRect(drawX + p.w - 16, drawY - 36, 8, 36);
+                ctx.fillStyle = "#9B5DE5";
+                ctx.fillRect(drawX + p.w - 8, drawY - 34, 22, 16);
+            }
+        }
+
         ctx.fillStyle = player.state === "dash" ? "cyan" : "blue";
         ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
 
-        for (let p of platforms) {
-            if (p.isBackground) {
-                ctx.fillStyle = "rgba(100, 100, 100, 0.25)"; // Ghostly background color
-            } else if (p.type === 'risk') {
-                ctx.fillStyle = "#FF6B35";  // orange — risk pips
-            } else if (p.type === 'deadend') {
-                ctx.fillStyle = "#803e46ff";  // muted maroon — dead-ends
-            } else {
-                ctx.fillStyle = "#1B7A1B";  // forest green — standard + ground
-            }
-            ctx.fillRect(p.x - camera.x, p.y - camera.y, p.w, p.h);
-        }
+        ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.fillRect(16, 16, 260, 74);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "16px Arial";
+        ctx.fillText("Arrows: move / jump", 28, 42);
+        ctx.fillText("Space: dash", 28, 62);
+        ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, 82);
     }
 
     let lastTime = 0;
