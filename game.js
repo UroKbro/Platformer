@@ -17,51 +17,30 @@ window.onload = function () {
         h: 50,
         vx: 0,
         vy: 0,
-        speed: 4,
-        jumpPower: 12,
+        // movement tuning (tuned for snappy but smooth feel)
+        accel: 0.75,
+        friction: 0.9,
+        maxSpeed: 5,
+        maxFallSpeed: 16,
+        jumpPower: 14,
         onGround: false,
         lastJumpTime: 0,
-        jumpCooldown: 500,
-        airControl: 0.75
+        jumpCooldown: 450, // ms
+        // reduces acceleration in air (less control than ground)
+        airControl: 0.7,
+        // coyote time and input buffering
+        coyoteTime: 60, // ms
+        lastGrounded: 0,
+        jumpBufferTime: 75, // ms
+        lastJumpPress: 0
     };
-    const gravity = 0.3;
+    const gravity = 0.45;
     const world = {
         width: 5000,
         height: 2000
     };
 
-    const platforms = [
-        {
-            x: 0,
-            y: world.height - 100,
-            w: world.width,
-            h: 100
-        },
-        {
-            x: 300,
-            y: world.height - 200,
-            w: 200,
-            h: 20
-        },
-        {
-            x: 600,
-            y: world.height - 300,
-            w: 200,
-            h: 20
-        },
-        {
-            x: 900,
-            y: world.height - 400,
-            w: 300,
-            h: 20
-        },
-        {
-            x: 1400,
-            y: world.height - 500,
-            w: 100,
-            h: 20
-        }
-    ];
+   const platforms = createPlatforms(world);
 
     const camera = {
         x: 0,
@@ -73,40 +52,85 @@ window.onload = function () {
 
     window.addEventListener("keydown", (e) => {
         keys[e.key] = true;
-        e.preventDefault();
+        // Record jump presses for input buffering
+        if (e.key === "ArrowUp") player.lastJumpPress = Date.now();
+        // Only prevent default for game control keys so page scrolling still works
+        if ((e.key && e.key.startsWith("Arrow")) || e.code === "Space") {
+            e.preventDefault();
+        }
     });
 
     window.addEventListener("keyup", (e) => {
         keys[e.key] = false;
-        e.preventDefault();
+        if ((e.key && e.key.startsWith("Arrow")) || e.code === "Space") {
+            e.preventDefault();
+        }
     });
 
 
     function update() {
-        player.vx = 0;
+        const prevY = player.y;
 
-        if (keys["ArrowLeft"]) player.vx = -player.speed;
-        if (keys["ArrowRight"]) player.vx = player.speed;
+        // Horizontal input: -1 (left), 0, 1 (right)
+        let inputX = 0;
+        if (keys["ArrowLeft"]) inputX -= 1;
+        if (keys["ArrowRight"]) inputX += 1;
 
+        // Apply acceleration (weaker in air)
+        const effectiveAccel = player.accel * (player.onGround ? 1 : player.airControl);
+        if (inputX !== 0) {
+            player.vx += inputX * effectiveAccel;
+        } else {
+            // Apply ground friction when no input, gentle air drag when airborne
+            if (player.onGround) {
+                player.vx *= player.friction;
+                if (Math.abs(player.vx) < 0.1) player.vx = 0;
+            } else {
+                player.vx *= 0.997;
+            }
+        }
 
-        if (keys["ArrowUp"] && player.onGround && Date.now() - player.lastJumpTime >= player.jumpCooldown) {
+        // Clamp horizontal speed
+        player.vx = Math.max(-player.maxSpeed, Math.min(player.maxSpeed, player.vx));
+
+        // Jump with coyote time and input buffering
+        const now = Date.now();
+        const jumpPressedRecently = (player.lastJumpPress && now - player.lastJumpPress <= player.jumpBufferTime) || keys["ArrowUp"];
+        if (jumpPressedRecently && (player.onGround || now - player.lastGrounded <= player.coyoteTime) && now - player.lastJumpTime >= player.jumpCooldown) {
             player.vy = -player.jumpPower;
             player.onGround = false;
-            player.lastJumpTime = Date.now();
+            player.lastJumpTime = now;
+            player.lastJumpPress = 0;
         }
 
-        if (!player.onGround) {
-            if (keys["ArrowLeft"]) player.vx = -player.speed * player.airControl;
-            if (keys["ArrowRight"]) player.vx = player.speed * player.airControl;
-        }
-
+        // Gravity and vertical clamp
         player.vy += gravity;
+        player.vy = Math.min(player.vy, player.maxFallSpeed);
 
-
+        // ---- Move X and handle horizontal collisions ----
         player.x += player.vx;
+
+        for (let p of platforms) {
+            if (
+                player.x < p.x + p.w &&
+                player.x + player.w > p.x &&
+                player.y < p.y + p.h &&
+                player.y + player.h > p.y
+            ) {
+                // Horizontal overlap: push out on X and stop horizontal velocity
+                if (player.vx > 0) {
+                    player.x = p.x - player.w;
+                } else if (player.vx < 0) {
+                    player.x = p.x + p.w;
+                }
+                player.vx = 0;
+            }
+        }
+
+        // ---- Move Y and handle vertical collisions ----
         player.y += player.vy;
 
-
+        // Reset onGround; will be set if we land this frame
         player.onGround = false;
 
         for (let p of platforms) {
@@ -117,11 +141,18 @@ window.onload = function () {
                 player.y + player.h > p.y
             ) {
                 if (player.vy > 0) {
-                    player.y = p.y - player.h;
-                    player.vy = 0;
-                    player.onGround = true;
-                }
-                if (player.vy < 0) {
+                    // Only land if we were above the platform before moving
+                    if (prevY + player.h <= p.y) {
+                        player.y = p.y - player.h;
+                        player.vy = 0;
+                        player.onGround = true;
+                        player.lastGrounded = Date.now();
+                    } else {
+                        // fallback resolution
+                        player.y = p.y - player.h;
+                        player.vy = 0;
+                    }
+                } else if (player.vy < 0) {
                     player.y = p.y + p.h;
                     player.vy = 0;
                 }
