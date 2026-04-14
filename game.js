@@ -42,8 +42,10 @@ window.onload = function () {
         dashRequested: false,
         dashTime: 0,
         dashDuration: 120,
-        dashCooldown: 500,
+        dashCooldown: 1200, // Time to recharge ALL charges
         lastDashTime: 0,
+        dashCharges: 1,
+        maxDashCharges: 1,
         dashSpeed: 12,
         dashDirX: 1,
         dashDirY: 0
@@ -141,9 +143,18 @@ window.onload = function () {
         if (
             player.dashRequested &&
             player.state !== "dash" &&
-            now - player.lastDashTime > player.dashCooldown
+            player.dashCharges > 0
         ) {
+            player.dashCharges--;
+            player.dashRequested = false; // Consume request immediately
             setState("dash");
+        }
+
+        // Recharge dashes if not dashing and wait time met
+        if (player.state !== "dash" && player.dashCharges < player.maxDashCharges) {
+            if (now - player.lastDashTime > player.dashCooldown) {
+                player.dashCharges = player.maxDashCharges;
+            }
         }
 
         // ===== DASH STATE =====
@@ -158,6 +169,7 @@ window.onload = function () {
 
             // collision resolution
             for (let p of platforms) {
+                if (p.isBackground) continue;
                 if (
                     player.x < p.x + p.w &&
                     player.x + player.w > p.x &&
@@ -296,8 +308,16 @@ window.onload = function () {
         ctx.fillStyle = player.state === "dash" ? "cyan" : "blue";
         ctx.fillRect(player.x - camera.x, player.y - camera.y, player.w, player.h);
 
-        ctx.fillStyle = "green";
         for (let p of platforms) {
+            if (p.isBackground) {
+                ctx.fillStyle = "rgba(100, 100, 100, 0.25)"; // Ghostly background color
+            } else if (p.type === 'risk') {
+                ctx.fillStyle = "#FF6B35";  // orange — risk pips
+            } else if (p.type === 'deadend') {
+                ctx.fillStyle = "#803e46ff";  // muted maroon — dead-ends
+            } else {
+                ctx.fillStyle = "#1B7A1B";  // forest green — standard + ground
+            }
             ctx.fillRect(p.x - camera.x, p.y - camera.y, p.w, p.h);
         }
     }
