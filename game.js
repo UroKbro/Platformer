@@ -245,6 +245,7 @@ window.onload = function () {
         player.x += player.vx;
 
         for (let p of platforms) {
+            if (p.isBackground) continue;
             if (
                 player.x < p.x + p.w &&
                 player.x + player.w > p.x &&
@@ -262,6 +263,7 @@ window.onload = function () {
         player.onGround = false;
 
         for (let p of platforms) {
+            if (p.isBackground) continue;
             if (
                 player.x < p.x + p.w &&
                 player.x + player.w > p.x &&
