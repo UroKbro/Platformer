@@ -80,6 +80,7 @@ window.onload = function () {
     let platforms;
     let enemies = [];
     let teleporters = [];
+    let teleporterHint = null;
     let portalParticles = [];
     let environmentParticles = [];
     let lives = 3;
@@ -91,7 +92,6 @@ window.onload = function () {
     };
 
     const keys = {};
-    const margin = 150;
 
     function isPlatformSolid(platform) {
         if (platform.isBackground) return false;
@@ -116,6 +116,7 @@ window.onload = function () {
         player.renderScaleY = 1;
         player.stretchVel = 0;
         player.lastTeleportAt = 0;
+        teleporterHint = null;
         
         platforms = level.platforms.map((platform, index) => ({
             ...platform,
@@ -171,6 +172,7 @@ window.onload = function () {
         player.renderScaleY = 1;
         player.stretchVel = 0;
         player.lastTeleportAt = 0;
+        teleporterHint = null;
         camera.x = player.x;
         camera.y = player.y;
 
@@ -237,6 +239,13 @@ window.onload = function () {
     }
 
     function updateVisualEffects(now, dt) {
+        const isIdle = player.onGround && player.state !== "dash" && Math.abs(player.vx) < 0.05;
+        if (isIdle) {
+            player.renderScaleX = 1;
+            player.renderScaleY = 1;
+            player.stretchVel = 0;
+        }
+
         player.renderScaleX = lerp(player.renderScaleX, 1, Math.min(1, dt * 12 + player.stretchVel));
         player.renderScaleY = lerp(player.renderScaleY, 1, Math.min(1, dt * 12 + player.stretchVel));
         player.stretchVel = Math.max(0, player.stretchVel - dt * 0.9);
@@ -274,22 +283,38 @@ window.onload = function () {
         }
     }
 
+    function rectIntersectsCircle(rect, circle) {
+        const closestX = clamp(circle.x, rect.x, rect.x + rect.w);
+        const closestY = clamp(circle.y, rect.y, rect.y + rect.h);
+        const dx = circle.x - closestX;
+        const dy = circle.y - closestY;
+        return (dx * dx + dy * dy) <= circle.r * circle.r;
+    }
+
+    function consumeConfirmKey() {
+        keys["Enter"] = false;
+        keys["KeyE"] = false;
+        keys["e"] = false;
+        keys["E"] = false;
+    }
+
     function handleTeleporters(now) {
+        teleporterHint = null;
         if (now - player.lastTeleportAt < 180) return;
 
-        const playerCx = player.x + player.w * 0.5;
-        const playerCy = player.y + player.h * 0.5;
+        const wantsConfirm = !!(keys["Enter"] || keys["KeyE"]);
         for (const teleporter of teleporters) {
             if (teleporter.cooldownUntil > now) continue;
-            const dx = playerCx - teleporter.entry.x;
-            const dy = playerCy - teleporter.entry.y;
-            const radius = teleporter.entry.r + Math.max(player.w, player.h) * 0.3;
-            if ((dx * dx + dy * dy) > radius * radius) continue;
+            if (!rectIntersectsCircle(player, teleporter.entry)) continue;
+
+            teleporterHint = teleporter;
+            if (!wantsConfirm) continue;
 
             player.x = teleporter.exit.x - player.w * 0.5;
             player.y = teleporter.exit.y - player.h * 0.5;
             player.lastTeleportAt = now;
             teleporter.cooldownUntil = now + 500;
+            consumeConfirmKey();
 
             for (let i = 0; i < 18; i++) {
                 portalParticles.push({
@@ -369,6 +394,7 @@ window.onload = function () {
     // INPUT
     window.addEventListener("keydown", (e) => {
         keys[e.key] = true;
+        keys[e.code] = true;
 
         if (e.key === "ArrowUp") player.lastJumpPress = Date.now();
 
@@ -383,6 +409,7 @@ window.onload = function () {
 
     window.addEventListener("keyup", (e) => {
         keys[e.key] = false;
+        keys[e.code] = false;
 
         if (e.code === "Space") {
             player.dashRequested = false;
@@ -767,12 +794,25 @@ window.onload = function () {
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        for (let p of platforms) {
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#08111F");
+        sky.addColorStop(0.55, "#111B2D");
+        sky.addColorStop(1, "#1B2638");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const drawPlatforms = [...platforms].sort((a, b) => {
+            if (a.isBackground === b.isBackground) return 0;
+            return a.isBackground ? -1 : 1;
+        });
+
+        for (let p of drawPlatforms) {
             if (p.isHiddenScenery) continue;
             if (p.type === "crumble" && p.crumbleState === "hidden") continue;
 
-            let drawX = p.x - camera.x;
-            const drawY = p.y - camera.y;
+            const parallax = p.isBackground ? 0.25 : (p.layer === "foreground" ? 0.92 : 1);
+            let drawX = p.x - camera.x * parallax;
+            const drawY = p.y - camera.y * parallax;
 
             if (p.type === "crumble" && p.crumbleState === "warning") {
                 const flash = Math.floor(Date.now() / 90) % 2 === 0;
@@ -951,6 +991,19 @@ window.onload = function () {
             window.drawEnemies(ctx, enemies, camera, Date.now());
         }
 
+        if (teleporterHint) {
+            const hintX = teleporterHint.entry.x - camera.x;
+            const hintY = teleporterHint.entry.y - camera.y - 42;
+            ctx.save();
+            ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+            ctx.fillRect(hintX - 74, hintY - 20, 148, 26);
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "14px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("Press Enter to teleport", hintX, hintY);
+            ctx.restore();
+        }
+
         for (const teleporter of teleporters) {
             for (const endpoint of [teleporter.entry, teleporter.exit]) {
                 const px = endpoint.x - camera.x;
@@ -1033,6 +1086,8 @@ window.onload = function () {
             ctx.globalAlpha = 1.0;
         } else {
             ctx.fillRect(-player.w / 2, -player.h / 2, player.w, player.h);
+            ctx.fillStyle = player.facing >= 0 ? "#DFF6FF" : "#B8E8FF";
+            ctx.fillRect(player.facing >= 0 ? 2 : -10, -10, 8, 8);
         }
         ctx.restore();
 
@@ -1044,12 +1099,13 @@ window.onload = function () {
         ctx.font = "16px Arial";
         ctx.fillText("Arrows: move / jump", 28, 42);
         ctx.fillText("Space: dash", 28, 62);
-        ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, 82);
+        ctx.fillText("Enter / E: teleport", 28, 82);
+        ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, 102);
         
         ctx.fillStyle = "#FF4444";
-        ctx.fillText(`Lives: ${lives}`, 28, 102);
+        ctx.fillText(`Lives: ${lives}`, 28, 122);
 
-        let py = 122;
+        let py = 142;
         ctx.fillStyle = "#FFD700";
         for (let type of powerUpKeys) {
             const left = Math.ceil((player.powerUps[type] - Date.now()) / 1000);

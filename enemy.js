@@ -85,12 +85,17 @@
       detectionBox: null,
       spawnX: x,
       spawnY: y,
+      homeX: x,
+      homeY: y,
       // Variant config slots
       patrolMinX: null,
       patrolMaxX: null,
       aggroRange: null,
       interceptLeadTime: null,
       activeUntil: 0,
+      lastAttackAt: 0,
+      attackTargetX: null,
+      attackTargetY: null,
       predictedX: null,
       predictedY: null
     };
@@ -146,6 +151,21 @@
       e.homeX = e.spawnX;
       e.homeY = e.spawnY;
       e.aggroRange = spawn.aggroRange ?? 520;
+      return e;
+    }
+
+    if (type === "sentinel") {
+      const w = 30;
+      const h = 30;
+      const x = spawn.x ?? (platform.x + platform.w * 0.5 - w * 0.5);
+      const y = spawn.y ?? (platform.y - 92);
+      const e = makeBaseEnemy(`sentinel_${idx}`, type, x, y, w, h, platform.id);
+      e.state = ENEMY_STATES.PATROL;
+      e.speed = spawn.speed ?? 210;
+      e.aggroRange = spawn.aggroRange ?? 360;
+      e.homeX = x;
+      e.homeY = y;
+      e.hoverPhase = random() * Math.PI * 2;
       return e;
     }
 
@@ -279,6 +299,48 @@
     e.facing = vx >= 0 ? 1 : -1;
   }
 
+  function updateSentinel(e, player, platforms, dt, now) {
+    const px = player.x + player.w * 0.5;
+    const py = player.y + player.h * 0.5;
+    const dx = px - (e.x + e.w * 0.5);
+    const dy = py - (e.y + e.h * 0.5);
+    const near = (dx * dx + dy * dy) <= (e.aggroRange * e.aggroRange);
+
+    if (near && now - e.lastAttackAt > 850) {
+      e.lastAttackAt = now;
+      e.activeUntil = now + 240;
+      e.attackTargetX = clamp(px - e.w * 0.5, e.homeX - 120, e.homeX + 120);
+      e.attackTargetY = clamp(py - e.h * 0.5 - 20, e.homeY - 110, e.homeY + 90);
+      setState(e, ENEMY_STATES.ACTIVE, now);
+    }
+
+    const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
+    const targetX = active ? e.attackTargetX : e.homeX;
+    const targetY = active ? e.attackTargetY : e.homeY + Math.sin((now / 220) + e.hoverPhase) * 8;
+
+    const cx = e.x + e.w * 0.5;
+    const cy = e.y + e.h * 0.5;
+    const vx = targetX - cx;
+    const vy = targetY - cy;
+    const len = Math.sqrt(vx * vx + vy * vy) || 1;
+    const maxStep = (e.speed ?? 210) * dt;
+    const step = Math.min(maxStep, len);
+
+    e.x += (vx / len) * step;
+    e.y += (vy / len) * step;
+    e.facing = vx >= 0 ? 1 : -1;
+
+    if (!active && e.state === ENEMY_STATES.ACTIVE && now > e.activeUntil) {
+      setState(e, ENEMY_STATES.RETURN, now);
+    }
+
+    if (!active && Math.abs(e.x - e.homeX) < 2 && Math.abs(e.y - e.homeY) < 2) {
+      e.x = e.homeX;
+      e.y = e.homeY;
+      if (e.state !== ENEMY_STATES.PATROL) setState(e, ENEMY_STATES.PATROL, now);
+    }
+  }
+
   function updateEnemies(enemies, player, platforms, dt, now) {
     if (!enemies || enemies.length === 0) return;
     for (const e of enemies) {
@@ -286,6 +348,7 @@
       if (e.type === "pacingStalker") updatePacingStalker(e, player, platforms, dt, now);
       else if (e.type === "gapGuard") updateGapGuard(e, player, platforms, dt, now);
       else if (e.type === "hoverer") updateHoverer(e, player, platforms, dt, now);
+      else if (e.type === "sentinel") updateSentinel(e, player, platforms, dt, now);
     }
   }
 
@@ -370,6 +433,24 @@
           ctx.arc(e.predictedX - camera.x, e.predictedY - camera.y, 8, 0, Math.PI * 2);
           ctx.stroke();
         }
+      } else if (e.type === "sentinel") {
+        const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
+        ctx.save();
+        ctx.translate(sx + e.w * 0.5, sy + e.h * 0.5);
+        ctx.rotate((now / 220) * (e.facing >= 0 ? 1 : -1));
+        ctx.fillStyle = active ? "#FF6B6B" : "#00D4FF";
+        ctx.beginPath();
+        ctx.moveTo(0, -e.h * 0.55);
+        ctx.lineTo(e.w * 0.55, 0);
+        ctx.lineTo(0, e.h * 0.55);
+        ctx.lineTo(-e.w * 0.55, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
 
       if (DEBUG.enabled && DEBUG.showDetection && e.type === "pacingStalker") {

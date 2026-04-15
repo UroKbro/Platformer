@@ -8,7 +8,6 @@ function createLevelGenerator() {
     player_w: 50,
     player_h: 50,
     jump_x: 280,
-    jump_y: 230,
     dash_x: 360
   };
 
@@ -30,7 +29,6 @@ function createLevelGenerator() {
       hard: "#C97B35",
       shared: "#5C7AEA",
       branch: "#8A6F50",
-      reward: "#D7B84F",
       background: "rgba(82, 78, 72, 0.18)"
     },
     cavern: {
@@ -38,7 +36,6 @@ function createLevelGenerator() {
       hard: "#D16C3F",
       shared: "#4C6FFF",
       branch: "#6D5A4E",
-      reward: "#E6C85C",
       background: "rgba(73, 94, 90, 0.18)"
     },
     fortress: {
@@ -46,7 +43,6 @@ function createLevelGenerator() {
       hard: "#D06464",
       shared: "#7A6FF0",
       branch: "#7E746B",
-      reward: "#D7B347",
       background: "rgba(74, 74, 82, 0.18)"
     },
     industrial: {
@@ -54,7 +50,6 @@ function createLevelGenerator() {
       hard: "#E0764E",
       shared: "#6D6CFF",
       branch: "#7F6F58",
-      reward: "#F2C84B",
       background: "rgba(93, 94, 98, 0.18)"
     },
     overgrown: {
@@ -62,7 +57,6 @@ function createLevelGenerator() {
       hard: "#C96A3C",
       shared: "#5A78F2",
       branch: "#76644A",
-      reward: "#D3C058",
       background: "rgba(58, 89, 60, 0.18)"
     }
   };
@@ -97,12 +91,6 @@ function createLevelGenerator() {
 
   function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
-  }
-
-  function dist(a, b) {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return Math.sqrt(dx * dx + dy * dy);
   }
 
   function Platform(x, y, w, h, type, tag) {
@@ -366,12 +354,10 @@ function createLevelGenerator() {
       const reserveForGoal = (internalCount - i + 1) * (hard ? 170 : 145);
       let width = hard ? ri(82, 132) : ri(145, 220);
       let gapMin = hard ? 125 : 110;
-      let gapMax = hard ? 215 : 175;
       let travelHint = hard ? "dash_optional" : "standard_preferred";
 
       if (hard && i === dashEdgeIndex && segmentDistance > 520) {
         gapMin = PLAYER.jump_x + 12;
-        gapMax = PLAYER.dash_x - 32;
         travelHint = "dash_required";
         width = ri(90, 125);
       }
@@ -401,11 +387,9 @@ function createLevelGenerator() {
       });
 
       const repaired = tryRepairEdge(current, platform, pathType, profile, travelHint);
-      if (repaired !== platform) {
-        platform.x = repaired.x;
-        platform.y = repaired.y;
-        platform.w = repaired.w;
-      }
+      platform.x = repaired.x;
+      platform.y = repaired.y;
+      platform.w = repaired.w;
 
       if (!isReachable(current, platform, travelHint)) {
         const rescue = makePathPlatform(pathType, current.x + current.w + 150, current.y + (hard ? ri(-40, 40) : ri(-20, 20)), hard ? 120 : 160, {
@@ -665,9 +649,57 @@ function createLevelGenerator() {
     }
   }
 
+  function attachSupportFeatures(platforms, anchors, profile) {
+    const refillCandidates = platforms.filter((p) =>
+      !p.isBackground &&
+      !p.isHiddenScenery &&
+      !p.hasPowerUp &&
+      !p.enemySpawn &&
+      !p.hasSawblade &&
+      p.pathType === "hard" &&
+      p.role === "path" &&
+      p.w >= 90
+    );
+
+    let refillsPlaced = 0;
+    for (const p of refillCandidates) {
+      if (refillsPlaced >= 5) break;
+      if (p.edgeType !== "dash_gate" && !chance(0.18)) continue;
+      p.hasDashRefill = true;
+      refillsPlaced++;
+    }
+
+    const boostCandidates = platforms.filter((p) =>
+      !p.isBackground &&
+      !p.isHiddenScenery &&
+      !p.hasPowerUp &&
+      !p.enemySpawn &&
+      !p.hasSawblade &&
+      p.pathType !== "branch" &&
+      p.type === "standard" &&
+      p.w >= 150
+    );
+
+    let boostsPlaced = 0;
+    for (const p of boostCandidates) {
+      if (boostsPlaced >= 6) break;
+      if (!chance(0.1)) continue;
+      p.type = "boost";
+      p.boostStrength = 8 + ri(0, 2);
+      boostsPlaced++;
+    }
+
+    for (let i = 1; i < anchors.length - 1; i++) {
+      if (!chance(0.75)) continue;
+      anchors[i].isCheckpoint = true;
+      anchors[i].checkpointTier = "shared";
+    }
+  }
+
   function attachEnemySpawns(platforms, leafNodes, profile) {
     const hardCandidates = platforms.filter((p) => p.pathType === "hard" && p.edgeType === "dash_gate" && p.w >= 110 && !p.hasPowerUp && !p.hasSawblade);
     const stalkerCandidates = platforms.filter((p) => p.pathType === "easy" && p.role === "path" && p.w >= 190 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
+    const sentinelCandidates = platforms.filter((p) => p.pathType === "hard" && p.role === "path" && p.w >= 150 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
 
     for (const p of hardCandidates) {
       if (chance(profile.enemyChance * 0.85)) {
@@ -681,6 +713,14 @@ function createLevelGenerator() {
       if (!chance(profile.enemyChance * 0.55)) continue;
       p.enemySpawn = { type: "pacingStalker", aggroRange: 240 + ri(0, 70), speed: 145 + ri(0, 35) };
       stalkersPlaced++;
+    }
+
+    let sentinelsPlaced = 0;
+    for (const p of sentinelCandidates) {
+      if (sentinelsPlaced >= 4) break;
+      if (!chance(profile.enemyChance * 0.5)) continue;
+      p.enemySpawn = { type: "sentinel", aggroRange: 280 + ri(0, 80), speed: 185 + ri(0, 40) };
+      sentinelsPlaced++;
     }
 
     for (const leaf of leafNodes) {
@@ -903,6 +943,7 @@ function createLevelGenerator() {
     reservePowerUpSlots(platforms, profile);
     assignSceneryAndSecrets(leafNodes, profile);
     attachHazards(platforms, profile);
+    attachSupportFeatures(platforms, anchors, profile);
     attachEnemySpawns(platforms, leafNodes, profile);
 
     addLightGuidance(platforms, anchors, profile);
