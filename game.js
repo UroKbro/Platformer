@@ -99,7 +99,14 @@ window.onload = function () {
     let environmentParticles = [];
     let checkpoint = null;
     let lives = 3;
-    let gameState = "playing"; // "playing" | "game_over"
+    let gameState = "playing"; // "playing" | "game_over" | "victory"
+    const campaign = {
+        currentLevel: 1,
+        totalLevels: 3,
+        inBossStage: false,
+        bossType: null
+    };
+    const bossPool = ["bossColossus", "bossTempest", "bossOracle"];
 
     const camera = {
         x: 0,
@@ -116,8 +123,69 @@ window.onload = function () {
         return true;
     }
 
-    function initLevel() {
-        level = generateLevel(Date.now(), 2, world.width, world.height);
+    function buildRuntimePlatforms() {
+        return level.platforms.map((platform, index) => {
+            const runtime = {
+                ...platform,
+                id: index,
+                crumbleDelay: platform.crumbleDuration || (platform.type === "crumble" ? 500 : 0),
+                crumbleResetDelay: platform.type === "crumble" ? 2400 : 0,
+                crumbleState: platform.type === "crumble" ? "idle" : "stable",
+                crumbleTriggeredAt: 0,
+                respawnAt: 0,
+                phaseState: platform.type === "phase" ? (platform.phaseState || "solid") : null,
+                phaseGlow: 0,
+                lastReactiveAt: 0,
+                reactiveMode: null
+            };
+
+            if (platform.hasSawblade) {
+                runtime.sawX = platform.sawX ?? runtime.w * 0.5;
+                runtime.sawSpeed = platform.sawSpeed ?? 60;
+                runtime.sawSize = platform.sawSize ?? 15;
+            }
+
+            return runtime;
+        });
+    }
+
+    function resetLevelState() {
+        platforms = buildRuntimePlatforms();
+        enemies = (typeof window.createEnemies === "function")
+          ? window.createEnemies({ ...level, platforms })
+          : [];
+        teleporters = (level.teleporters || []).map((teleporter) => ({
+            ...teleporter,
+            cooldownUntil: 0
+        }));
+        portalParticles = [];
+        environmentParticles = [];
+    }
+
+    function pickRandomBoss() {
+        return bossPool[Math.floor(Math.random() * bossPool.length)];
+    }
+
+    function getBossDisplayName(type) {
+        if (type === "bossColossus") return "Iron Colossus";
+        if (type === "bossTempest") return "Tempest Idol";
+        if (type === "bossOracle") return "Phase Oracle";
+        return "Unknown Boss";
+    }
+
+    function buildCampaignLevel() {
+        const seed = Date.now();
+        if (campaign.inBossStage && typeof generateBossLevel === "function") {
+            if (!campaign.bossType) campaign.bossType = pickRandomBoss();
+            return generateBossLevel(seed, campaign.bossType, world.width, world.height);
+        }
+
+        return generateLevel(seed, campaign.currentLevel, world.width, world.height);
+    }
+
+    function initLevel(options = {}) {
+        const preserveAttacks = !!options.preserveAttacks;
+        level = buildCampaignLevel();
         player.x = level.startPos.x;
         player.y = level.startPos.y;
         player.vx = 0;
@@ -136,28 +204,10 @@ window.onload = function () {
         player.pickupRadius = 0;
         player.supportPlatformId = null;
         teleporterHint = null;
-        resetAttackLoadout();
+        if (preserveAttacks) resetAttackStatePreservingLoadout();
+        else resetAttackLoadout();
         
-        platforms = level.platforms.map((platform, index) => ({
-            ...platform,
-            id: index,
-            crumbleDelay: platform.crumbleDuration || (platform.type === "crumble" ? 500 : 0),
-            crumbleResetDelay: platform.type === "crumble" ? 2400 : 0,
-            crumbleState: platform.type === "crumble" ? "idle" : "stable",
-            crumbleTriggeredAt: 0,
-            respawnAt: 0
-        }));
-
-        // Enemies are created from per-platform spawn descriptors.
-        enemies = (typeof window.createEnemies === "function")
-          ? window.createEnemies({ ...level, platforms })
-          : [];
-        teleporters = (level.teleporters || []).map((teleporter) => ({
-            ...teleporter,
-            cooldownUntil: 0
-        }));
-        portalParticles = [];
-        environmentParticles = [];
+        resetLevelState();
         checkpoint = null;
 
         camera.x = player.x;
@@ -167,10 +217,38 @@ window.onload = function () {
     function resetGame() {
         lives = 3;
         gameState = "playing";
+        campaign.currentLevel = 1;
+        campaign.inBossStage = false;
+        campaign.bossType = null;
         initLevel();
     }
 
     initLevel();
+
+    function getActiveBoss() {
+        for (const enemy of enemies) {
+            if (enemy && enemy.isBoss && !enemy.dead) return enemy;
+        }
+        return null;
+    }
+
+    function advanceCampaign() {
+        checkpoint = null;
+        if (campaign.inBossStage) {
+            gameState = "victory";
+            return;
+        }
+
+        if (campaign.currentLevel < campaign.totalLevels) {
+            campaign.currentLevel++;
+            initLevel({ preserveAttacks: true });
+            return;
+        }
+
+        campaign.inBossStage = true;
+        campaign.bossType = pickRandomBoss();
+        initLevel({ preserveAttacks: true });
+    }
 
     function die() {
         lives--;
@@ -200,17 +278,7 @@ window.onload = function () {
         camera.x = player.x;
         camera.y = player.y;
         resetAttackStatePreservingLoadout();
-
-        // Reset enemies to their original spawn state.
-        enemies = (typeof window.createEnemies === "function")
-          ? window.createEnemies({ ...level, platforms })
-          : [];
-        teleporters = (level.teleporters || []).map((teleporter) => ({
-            ...teleporter,
-            cooldownUntil: 0
-        }));
-        portalParticles = [];
-        environmentParticles = [];
+        resetLevelState();
     }
 
     function clamp(value, min, max) {
@@ -463,18 +531,9 @@ window.onload = function () {
     }
 
     function getThemePalette() {
-        const theme = level?.theme || "ruins";
-        if (theme === "cavern") {
-            return { skyTop: "#0c1821", skyBottom: "#1f3b4d", haze: "rgba(123, 182, 214, 0.09)" };
-        }
-        if (theme === "fortress") {
-            return { skyTop: "#171923", skyBottom: "#3e4057", haze: "rgba(180, 184, 219, 0.08)" };
-        }
-        if (theme === "industrial") {
-            return { skyTop: "#15191e", skyBottom: "#48515f", haze: "rgba(166, 182, 198, 0.08)" };
-        }
-        if (theme === "overgrown") {
-            return { skyTop: "#102314", skyBottom: "#345c36", haze: "rgba(148, 212, 137, 0.08)" };
+        const sky = level?.sky;
+        if (sky) {
+            return { skyTop: sky.top, skyBottom: sky.bottom, haze: sky.haze };
         }
         return { skyTop: "#151518", skyBottom: "#4d4338", haze: "rgba(227, 203, 168, 0.08)" };
     }
@@ -826,7 +885,7 @@ window.onload = function () {
     }
 
     function update(dt) {
-        if (gameState === "game_over") {
+        if (gameState === "game_over" || gameState === "victory") {
             if (keys["Enter"] || keys[" "]) {
                 resetGame();
                 keys["Enter"] = false; // Prevent immediate rebinding
@@ -844,6 +903,11 @@ window.onload = function () {
 
         if (typeof window.updateEnemies === "function") {
             window.updateEnemies(enemies, player, platforms, dt, now);
+        }
+
+        if (campaign.inBossStage && !getActiveBoss()) {
+            advanceCampaign();
+            return;
         }
 
         // ===== POWER-UP MANAGEMENT =====
@@ -1213,7 +1277,7 @@ window.onload = function () {
                 player.y < p.y + p.h &&
                 player.y + player.h > p.y
             ) {
-                initLevel();
+                advanceCampaign();
                 return;
             }
         }
@@ -1691,8 +1755,10 @@ window.onload = function () {
         ctx.restore();
 
         const powerUpKeys = Object.keys(player.powerUps);
+        const worldLabel = !campaign.inBossStage && level?.worldName ? `${level.worldName} ${level.worldTier}` : null;
+        const hudExtraLines = worldLabel ? 1 : 0;
         ctx.fillStyle = "rgba(8, 12, 20, 0.62)";
-        ctx.fillRect(16, 16, 310, 190 + Math.max(0, powerUpKeys.length) * 20);
+        ctx.fillRect(16, 16, 310, 190 + hudExtraLines * 20 + Math.max(0, powerUpKeys.length) * 20);
         ctx.fillStyle = "rgba(255,255,255,0.12)";
         ctx.fillRect(16, 16, 310, 4);
 
@@ -1703,21 +1769,52 @@ window.onload = function () {
         ctx.fillText("X: attack", 28, 82);
         ctx.fillText("C: swap attack", 28, 102);
         ctx.fillText("Enter / E: teleport", 28, 122);
-        ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, 142);
-        if (checkpoint) ctx.fillText("Checkpoint active", 28, 162);
+        if (worldLabel) {
+            ctx.fillStyle = "#FFE7A3";
+            ctx.fillText(worldLabel, 28, 142);
+            ctx.fillStyle = "#FFFFFF";
+        }
+        const dashY = worldLabel ? 162 : 142;
+        ctx.fillText(`Dash charges: ${player.dashCharges}`, 28, dashY);
+        if (checkpoint) ctx.fillText("Checkpoint active", 28, dashY + 20);
+        ctx.fillStyle = "#9AD1FF";
+        ctx.fillText(
+            campaign.inBossStage
+                ? `Boss Stage: ${getBossDisplayName(campaign.bossType)}`
+                : `Level ${campaign.currentLevel} / ${campaign.totalLevels}`,
+            28,
+            checkpoint ? dashY + 40 : dashY + 20
+        );
         
         ctx.fillStyle = "#FF4444";
-        ctx.fillText(`Lives: ${lives}`, 28, checkpoint ? 182 : 162);
+        ctx.fillText(`Lives: ${lives}`, 28, checkpoint ? dashY + 60 : dashY + 40);
 
         ctx.fillStyle = getAttackColor(getCurrentAttackType());
-        ctx.fillText(`Attack: ${getAttackLabel(getCurrentAttackType())}`, 28, checkpoint ? 202 : 182);
+        ctx.fillText(`Attack: ${getAttackLabel(getCurrentAttackType())}`, 28, checkpoint ? dashY + 80 : dashY + 60);
 
-        let py = checkpoint ? 222 : 202;
+        let py = checkpoint ? dashY + 100 : dashY + 80;
         for (let type of powerUpKeys) {
             const left = Math.ceil((player.powerUps[type] - Date.now()) / 1000);
             ctx.fillStyle = getPowerUpColor(type);
             ctx.fillText(`${getPowerUpLabel(type)} (${left}s)`, 28, py);
             py += 20;
+        }
+
+        const boss = getActiveBoss();
+        if (campaign.inBossStage && boss) {
+            const barW = Math.min(520, canvas.width * 0.45);
+            const barX = (canvas.width - barW) / 2;
+            const barY = 22;
+            ctx.fillStyle = "rgba(10, 10, 18, 0.78)";
+            ctx.fillRect(barX, barY, barW, 28);
+            ctx.fillStyle = getAttackColor("burst");
+            ctx.fillRect(barX + 3, barY + 3, (barW - 6) * (boss.hp / Math.max(1, boss.maxHp)), 22);
+            ctx.strokeStyle = "rgba(255,255,255,0.22)";
+            ctx.strokeRect(barX, barY, barW, 28);
+            ctx.fillStyle = "#FFFFFF";
+            ctx.textAlign = "center";
+            ctx.fillText(getBossDisplayName(boss.type), canvas.width / 2, barY + 20);
+            ctx.textAlign = "left";
         }
 
         const vignette = ctx.createRadialGradient(
@@ -1747,17 +1844,41 @@ window.onload = function () {
             ctx.fillText("Press SPACE to generated a new level!", canvas.width / 2, canvas.height / 2 + 40);
             
             ctx.textAlign = "left"; // Reset context
+        } else if (gameState === "victory") {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#8CFFB8";
+            ctx.font = "bold 56px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("YOU WIN", canvas.width / 2, canvas.height / 2 - 26);
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "24px Arial";
+            ctx.fillText(`Defeated ${getBossDisplayName(campaign.bossType)}`, canvas.width / 2, canvas.height / 2 + 18);
+            ctx.fillText("Press SPACE to start a new run", canvas.width / 2, canvas.height / 2 + 58);
+            ctx.textAlign = "left";
         }
     }
 
     let lastTime = 0;
+    let accumulator = 0;
+    const fixedStep = 1 / 60;
+    const maxFrameTime = 0.05;
+    const maxSubSteps = 4;
 
     function loop(timestamp) {
         if (!lastTime) lastTime = timestamp;
-        const dt = Math.min(0.05, (timestamp - lastTime) / 1000);
+        const dt = Math.min(maxFrameTime, (timestamp - lastTime) / 1000);
         lastTime = timestamp;
 
-        update(dt);
+        accumulator += dt;
+        let steps = 0;
+        while (accumulator >= fixedStep && steps < maxSubSteps) {
+            update(fixedStep);
+            accumulator -= fixedStep;
+            steps++;
+        }
+
+        if (steps === 0) update(dt);
         draw();
 
         requestAnimationFrame(loop);

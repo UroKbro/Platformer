@@ -1,197 +1,186 @@
-# Enemy System Implementation Plan
+# Platformer Stability Roadmap
 
-## Overview
+## Goal
 
-`enemy.js` does not exist yet. Based on the current codebase, `game.js` owns all runtime behavior and rendering, while `platforms.js` generates level data and hazard metadata. `enemy.js` should therefore be a small runtime module that creates, updates, checks collisions for, and draws enemies without taking over broader game logic.
+Bring the current game to a consistent, fair, and durable state before adding more mechanics.
 
-## Plan
+This roadmap focuses on three things:
+- generated levels must match real player capabilities
+- runtime systems must reset and interact consistently
+- feature metadata must reflect actual in-game behavior
 
-1. Decide the module boundary for `enemy.js`.
-   Keep it as a pure runtime module focused on enemy creation, updates, collision checks, and drawing.
-   Match the current codebase style: plain browser JS with global-script loading rather than ES modules, unless the project is being modernized at the same time.
+## Priority To-Do List
 
-2. Define a shared enemy schema used by all variants.
-   Every enemy should carry:
-   - `id`, `type`
-   - `x`, `y`, `w`, `h`
-   - `vx`, `vy`
-   - `platformId` or `homePlatform`
-   - `state`
-   - `facing`
-   - `speed`
-   - `detectionBox`
-   - `spawnX`, `spawnY`
-   - variant-specific config such as `patrolMinX`, `patrolMaxX`, `aggroRange`, `interceptLeadTime`, `activeUntil`
+### 1. Fix Level State Reset Consistency
 
-3. Standardize enemy states across all variants.
-   Use a small shared state vocabulary so update logic stays consistent:
-   - `IDLE`
-   - `PATROL`
-   - `PURSUIT`
-   - `INTERCEPT`
-   - `RETURN`
-   - `ACTIVE`
-   - `STUNNED` or `COOLDOWN` later if needed
+- Rebuild or fully reset level-stateful objects on death, not just enemies.
+- Ensure retries restore a fair state for:
+  - crumble platforms
+  - collected power-ups
+  - dash refills
+  - temporary pickups
+  - teleporter cooldowns and usage state
+- Decide checkpoint behavior explicitly:
+  - either checkpoints preserve collected resources since activation
+  - or checkpoints restore the world to a checkpoint snapshot
+- Remove cases where the player respawns weaker into a partially exhausted level.
 
-4. Build `enemy.js` around four core APIs.
-   Recommended functions:
-   - `createEnemies(level)`
-   - `updateEnemies(enemies, player, platforms, dt, now)`
-   - `checkEnemyCollisions(enemies, player)`
-   - `drawEnemies(ctx, enemies, camera, now)`
+Why:
+- Right now death/respawn can leave the world partially consumed while the player loses abilities, which creates unfair retries and possible soft-locks.
 
-5. Add shared utility helpers inside `enemy.js`.
-   Keep the file maintainable by centralizing repeated logic:
-   - AABB overlap
-   - detection-box calculation
-   - ledge check on a platform
-   - clamp-to-platform bounds
-   - nearest/future landing estimate
-   - state transition helper
+### 2. Make Generator Reachability Match Real Runtime Physics
 
-6. Implement Variant A: Gap Guard.
-   Purpose:
-   - hazard placed in dash-heavy hard-path sections
+- Audit all movement math so player reach is not frame-rate dependent.
+- Convert movement, gravity, dash travel, and enemy movement to a consistent `dt` model or a fixed-step update.
+- Re-tune `platforms.js` reachability assumptions once runtime physics are consistent.
+- Re-validate gap sizes for:
+  - normal jumps
+  - jump + dash
+  - giant/mini player forms
+  - boosted launches
 
-   Behavior:
-   - stationary by default
-   - watches the player distance and dash state
-   - when player is dashing nearby, enters `ACTIVE`
-   - expands hurt area or enables a larger electrified collision zone for a short window
+Why:
+- The generator currently assumes a stable movement envelope, but actual runtime movement varies enough to make some generated spaces unfair or inconsistent.
 
-   Integration:
-   - spawn on hard-path long-jump sections, especially `dash_gap`
+### 3. Repair Path Metadata Mismatches
 
-   Notes for this codebase:
-   - easiest signal is `player.state === "dash"`
-   - keep the activation window short so the dash-timing challenge is readable
+- Ensure all path-edge labels reflect real validation rules.
+- Fix branch and route metadata where `dash_required`, `dash_optional`, or shortcut tags are emitted without matching verification.
+- Fix final anchor connection metadata so forced-dash edges are not reported as normal jumps.
+- Re-check every inserted rescue platform and verify the route after rescue insertion.
 
-7. Implement Variant B: Pacing Stalker.
-   Purpose:
-   - territorial platform guard for easy-path flat segments
+Why:
+- The level graph currently says one thing in several places while the runtime and generator logic actually allow or require something else.
 
-   Behavior:
-   - patrols left/right on a single assigned platform
-   - checks floor ahead before moving further
-   - flips direction at edges
-   - if player enters detection box, switches to `PURSUIT`
-   - pursues only within that platform’s horizontal bounds
-   - if player leaves range, goes to `RETURN` and recenters or resumes patrol
+### 4. Tighten Platform Spacing and Rescue Logic
 
-   Integration:
-   - spawn on longer `standard` platforms with enough width
+- Add a full post-generation pass that verifies every critical route segment end-to-end.
+- Detect and repair:
+  - impossible follow-up jumps after rescue insertion
+  - stacked hazards with no recovery platform
+  - tiny landing zones immediately after high-speed traversal
+  - overlaps between hazards, enemies, boosts, checkpoints, and pickups
+- Add minimum safe landing rules after:
+  - dash gates
+  - teleport exits
+  - bounce pads
+  - boosts
 
-   Notes for this codebase:
-   - use platform bounds instead of general terrain scanning whenever possible
-   - only use actual “floor ahead” checks to preserve the ledge-aware feel
+Why:
+- Some individual edges are repaired locally, but there is not yet a robust global fairness pass for the completed route.
 
-8. Implement Variant C: Intercepting Hoverer.
-   Purpose:
-   - gate secret/dead-end/trophy spaces and punish predictable jumps
+### 5. Bring Crumble Platform Behavior In Line With Its Metadata
 
-   Behavior:
-   - flying enemy, ignores ground collision
-   - if player is airborne or approaching a target platform, estimate landing point
-   - move toward predicted landing spot instead of current player position
-   - if prediction is weak, drift back to a home hover point
+- Decide whether crumble platforms are:
+  - contact-triggered
+  - dash-triggered
+  - durability-based
+- Remove unused crumble metadata if it is not part of the design.
+- If dash-triggered crumble stays, implement that logic in runtime instead of treating all crumble platforms the same.
+- Tune warning and respawn timing so the mechanic stays readable.
 
-   Integration:
-   - spawn near `deadend` platforms, scenery rewards, or any future trophy/secret marker
+Why:
+- The generator assigns richer crumble behavior than the runtime actually supports.
 
-   Notes for this codebase:
-   - start with a lightweight prediction using current `player.x`, `player.y`, `player.vx`, `player.vy`, `gravity`
-   - prefer “good enough” prediction over a full platform physics sim for v1
+### 6. Fix Teleporter Safety and Placement Edge Cases
 
-9. Use the existing Sense -> Think -> Move -> Animate loop per enemy.
-   For each enemy update:
-   - Sense: player overlap, detection-box hit, current platform edge/wall, dash state, airborne state
-   - Think: choose state and target
-   - Move: update velocity and clamp motion
-   - Animate: set visual flags like alert marker, active glow, facing direction
+- Only place teleporter exits on verified safe platforms.
+- Exclude exit targets that contain or are too close to:
+  - enemies
+  - sawblades
+  - spikes
+  - boosts or bounce pads
+  - unstable crumble states
+- Correct exit placement so the player spawns cleanly on top of the destination platform.
+- Verify momentum preservation does not create immediate death on exit.
+- Add a fallback if no safe exit platform exists.
 
-10. Integrate enemy spawning into the level generator carefully.
-    Recommended generator changes in `platforms.js`:
-    - attach an `enemySpawn` descriptor to selected platforms instead of fully-instantiated enemies
-    - examples:
-      - hard path `dash_gap` or nearby landing platform -> `gapGuard`
-      - long flat easy-path platforms -> `pacingStalker`
-      - `deadend` or fake reward areas -> `hoverer`
+Why:
+- Teleporters should feel like smart loopbacks, not random punishment or clipping hazards.
 
-    Reason:
-    - `platforms.js` already generates metadata-driven hazards
-    - `game.js` can convert these descriptors into live enemy objects via `createEnemies(level)`
+### 7. Fix Checkpoint and Respawn Robustness
 
-11. Keep runtime enemy ownership in `game.js`.
-    Add:
-    - `let enemies = []`
-    - enemy initialization during `initLevel()`
-    - enemy reset when respawning or regenerating the level
-    - `updateEnemies(...)` within `update(dt)`
-    - `checkEnemyCollisions(...)` near existing hazard checks
-    - `drawEnemies(...)` within `draw()`
+- Store checkpoint data relative to platform identity, not just raw player coordinates.
+- Recompute respawn position from the target platform and current player size.
+- Validate respawn placement for base, giant, and mini forms.
+- Ensure checkpoints never point to removed, hidden, or invalid surfaces.
 
-12. Reuse the current hazard contract first.
-    For v1, any enemy collision should call `die()`.
-    Avoid adding stomp, damage, health, or invulnerability unless combat mechanics are also being introduced.
+Why:
+- Current checkpoint positions can go stale and become incorrect after size changes or world-state changes.
 
-13. Layer enemy rendering on top of the existing visual style.
-    Suggested visuals:
-    - Gap Guard: grounded turret/block with pulsing electric field when active
-    - Pacing Stalker: squat box with eye/facing indicator
-    - Hoverer: floating orb or drone with a predictive targeting ring
+### 8. Fix Size-Change Collision Edge Cases
 
-    State indicators:
-    - `!` or color shift when switching to `PURSUIT` or `ACTIVE`
-    - detection box should remain debug-only, off by default
+- Rework giant/mini transitions so both width and height changes are collision-safe.
+- Center width changes correctly and validate the new bounds against walls and ceilings.
+- Prevent teleport, checkpoint, or pickup interactions from placing resized players inside geometry.
+- Add explicit handling for hazard overlap during resize.
 
-14. Add debug toggles while building.
-    Temporary debug flags will make tuning much faster:
-    - show detection boxes
-    - show predicted landing point for hoverers
-    - show current state text above enemy
+Why:
+- Size-changing power-ups currently only compensate vertically, which can produce wall overlap and unstable collision results.
 
-    This should be easy to remove or disable later.
+### 9. Clean Up Enemy-System Inconsistencies
 
-15. Implement in a safe order.
-    Recommended sequence:
-    - shared enemy schema and helpers
-    - Pacing Stalker first
-    - Gap Guard second
-    - Hoverer third
-    - generator metadata hookup
-    - draw/state polish
-    - balance/tuning pass
+- Remove unsupported enemy spawn types or implement them fully.
+- Ensure dead enemies are actually non-interactive:
+  - stop updating
+  - stop colliding
+  - stop rendering
+- Verify enemy reset behavior matches level reset behavior.
+- Re-check enemy placement so hazards and enemies do not combine into unreadable traps.
 
-16. Verify against current systems.
-    Test these cases:
-    - enemy reset after death
-    - enemy state reset after level regeneration
-    - no enemy falls through crumble/hidden logic unexpectedly
-    - dash vs Gap Guard timing feels fair
-    - Stalker never leaves its platform
-    - Hoverer prediction still works when player dashes mid-air
-    - collisions remain consistent with player size-changing power-ups
+Why:
+- The current enemy pipeline can silently drop unsupported spawns and keep defeated enemies active.
 
-17. Keep the first version intentionally narrow.
-    Avoid adding:
-    - pathfinding
-    - combat
-    - sprite sheets
-    - enemy-enemy interactions
-    - full AI planner logic
+### 10. Add Automated Validation Hooks
 
-    The current codebase is single-file heavy, so the best first win is a compact `enemy.js` with deterministic hazard behavior.
+- Add a generator validation pass that can be run repeatedly across many seeds.
+- Log failures for:
+  - unreachable critical paths
+  - unsafe teleporter exits
+  - overlapping hazard clusters
+  - invalid checkpoint platforms
+  - enemy spawn incompatibilities
+- Add a small deterministic debug mode so broken seeds can be reproduced.
 
-## Recommended Spawn Rules
+Why:
+- Manual playtesting alone will miss seed-specific failures and edge-case interactions.
 
-- Hard paths: one `gapGuard` near `dash_gap` sequences or on the receiving platform of a forced dash.
-- Easy paths: one `pacingStalker` only on wide `standard` platforms to avoid clutter.
-- Useless or fake platforms: one `hoverer` guarding `deadend` or future trophy areas.
+## Testing Checklist
 
-## Open Choice
+- Retry after death on a level with used power-ups, dash refills, and crumble platforms.
+- Activate a checkpoint while giant or mini, then die and verify clean respawn.
+- Enter and exit every teleporter type while moving slowly, dashing, and while enlarged.
+- Run seeds with multiple hard-path dash gates and confirm all are beatable.
+- Verify enemy collisions after enemy death/removal.
+- Test on different frame rates and window sizes.
 
-1. Keep `enemy.js` as a plain global-script helper to match the current architecture.
-2. Convert the project to ES modules and make `enemy.js` a proper import.
+## Improvements To Explore After Fixes
 
-Recommendation:
-Use option 1 first because it is the smallest architectural change and fits the current project layout.
+These are not blockers. They should wait until the stability and fairness work above is complete.
+
+### Feature Backlog
+
+- Add seed-based validation reports and a simple in-game seed display.
+- Improve level readability with subtle route signposting for safe path vs hard path.
+- Add more branch-specific rewards so optional exploration feels more meaningful.
+- Add one or two new hazard-platform hybrids only after validation is solid.
+  - examples: one-way drop platforms, delayed collapses, short moving lifts
+- Add lightweight encounter composition rules so enemies and hazards combine fairly.
+- Improve checkpoint feedback with a clearer but still minimal activation cue.
+- Add difficulty tuning rules based on route density instead of random chance alone.
+- Add a generator scorecard for:
+  - fairness
+  - route variety
+  - hazard rhythm
+  - reward density
+- Add replay/debug tools for broken seeds and player death heatmaps.
+
+## Working Order
+
+1. Fix reset consistency.
+2. Fix physics consistency.
+3. Fix path metadata and rescue validation.
+4. Fix teleporter/checkpoint/size edge cases.
+5. Fix enemy-system inconsistencies.
+6. Add automated validation.
+7. Resume feature work from the backlog.

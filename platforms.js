@@ -3,29 +3,100 @@ function createLevelGenerator() {
     jump_power: 16.5,
     gravity: 0.52,
     max_speed: 5.2,
-    dash_speed: 12,
-    dash_duration_frames: Math.floor(120 / 16.67),
+    dash_speed: 24,
+    dash_duration_frames: Math.round(60 / 16.67),
     player_w: 50,
     player_h: 50,
     jump_x: 280,
     dash_x: 360
   };
 
-  const POWER_UP_TYPES = [
-    "doubleDash",
-    "highJump",
-    "antiGravity",
-    "superSpeed",
-    "giantBox",
-    "icePhysics",
-    "ghost",
-    "miniBox",
-    "feather",
-    "overcharge",
-    "magnet"
-  ];
-
-  const ATTACK_PICKUP_TYPES = ["chakram", "burst"];
+  const WORLD_TYPES = {
+    mesa: {
+      displayName: "Mesa World",
+      theme: {
+        easy: "#C78652",
+        hard: "#B6533C",
+        shared: "#E4BE78",
+        branch: "#8E5E45",
+        reward: "#FFD36B",
+        background: "rgba(188, 129, 84, 0.16)"
+      },
+      sky: { top: "#1B1210", bottom: "#8E5B38", haze: "rgba(255, 200, 132, 0.08)" },
+      powerUps: ["highJump", "superSpeed", "doubleDash", "overcharge"],
+      attackPickups: ["chakram"],
+      enemies: ["pacingStalker", "sentinel", "gapGuard"],
+      rewardBias: 0.02,
+      enemyBias: 0.03,
+      hazardBias: 0.02,
+      boostBias: 0.08,
+      conveyorBias: 0.02,
+      phaseBias: -0.06
+    },
+    tundra: {
+      displayName: "Tundra World",
+      theme: {
+        easy: "#78A8C8",
+        hard: "#5D86B3",
+        shared: "#CFE8FF",
+        branch: "#8BA5B8",
+        reward: "#9AF6FF",
+        background: "rgba(137, 180, 210, 0.16)"
+      },
+      sky: { top: "#0B1625", bottom: "#4E7196", haze: "rgba(203, 235, 255, 0.08)" },
+      powerUps: ["icePhysics", "feather", "doubleDash", "antiGravity"],
+      attackPickups: ["burst"],
+      enemies: ["hoverer", "razorbat", "gapGuard"],
+      rewardBias: 0.03,
+      enemyBias: 0.01,
+      hazardBias: 0.01,
+      boostBias: -0.03,
+      conveyorBias: -0.02,
+      phaseBias: 0.04
+    },
+    overgrowth: {
+      displayName: "Overgrowth World",
+      theme: {
+        easy: "#4E9B59",
+        hard: "#2F6E43",
+        shared: "#7ECF74",
+        branch: "#5F6B3C",
+        reward: "#D3F27A",
+        background: "rgba(72, 120, 69, 0.16)"
+      },
+      sky: { top: "#0E1E13", bottom: "#2F5E39", haze: "rgba(164, 219, 132, 0.08)" },
+      powerUps: ["ghost", "magnet", "miniBox", "highJump"],
+      attackPickups: ["chakram", "burst"],
+      enemies: ["hoverer", "pacingStalker", "razorbat"],
+      rewardBias: 0.05,
+      enemyBias: 0.02,
+      hazardBias: -0.02,
+      boostBias: -0.01,
+      conveyorBias: -0.04,
+      phaseBias: 0.07
+    },
+    foundry: {
+      displayName: "Foundry World",
+      theme: {
+        easy: "#6D7E91",
+        hard: "#D06464",
+        shared: "#B5BDC9",
+        branch: "#7E746B",
+        reward: "#FFBE5C",
+        background: "rgba(99, 102, 109, 0.16)"
+      },
+      sky: { top: "#171923", bottom: "#4E3B3C", haze: "rgba(242, 170, 130, 0.08)" },
+      powerUps: ["overcharge", "giantBox", "doubleDash", "superSpeed"],
+      attackPickups: ["burst"],
+      enemies: ["sentinel", "gapGuard", "razorbat"],
+      rewardBias: -0.01,
+      enemyBias: 0.05,
+      hazardBias: 0.05,
+      boostBias: 0.03,
+      conveyorBias: 0.07,
+      phaseBias: -0.02
+    }
+  };
 
   const THEMES = {
     ruins: {
@@ -196,7 +267,11 @@ function createLevelGenerator() {
   }
 
   function createLevelProfile(seed, difficulty, worldWidth, worldHeight) {
-    const themes = Object.keys(THEMES);
+    const worldKeys = Object.keys(WORLD_TYPES);
+    const worldType = choice(worldKeys);
+    const worldConfig = WORLD_TYPES[worldType];
+    const worldTier = clamp(Math.floor(difficulty || 1), 1, 4);
+    const tierScale = 0.8 + worldTier * 0.13;
     const openness = choice(["cavernous", "mixed", "compact"]);
     const branchDensity = choice(["sparse", "medium", "dense"]);
     const hazardPressure = choice(["low", "medium", "high"]);
@@ -207,20 +282,31 @@ function createLevelGenerator() {
     return {
       seed,
       difficulty,
-      theme: choice(themes),
+      worldType,
+      worldName: worldConfig.displayName,
+      worldTier,
+      worldConfig,
+      theme: worldConfig.theme,
+      sky: worldConfig.sky,
+      allowedPowerUps: worldConfig.powerUps,
+      allowedAttackPickups: worldConfig.attackPickups,
+      allowedEnemies: worldConfig.enemies,
       openness,
       branchDensity,
       hazardPressure,
       enemyPressure,
       rewardDensity,
       verticalBias,
-      anchorCount: clamp(Math.floor(worldWidth / 950) + ri(0, 2), 3, 6),
-      easyAmplitude: verticalBias === "high" ? 70 : verticalBias === "medium" ? 50 : 35,
-      hardAmplitude: verticalBias === "high" ? 180 : verticalBias === "medium" ? 145 : 110,
-      branchChance: branchDensity === "dense" ? 0.42 : branchDensity === "medium" ? 0.28 : 0.18,
-      hazardChance: hazardPressure === "high" ? 0.32 : hazardPressure === "medium" ? 0.2 : 0.12,
-      enemyChance: enemyPressure === "high" ? 0.28 : enemyPressure === "medium" ? 0.18 : 0.1,
-      rewardChance: rewardDensity === "high" ? 0.4 : rewardDensity === "medium" ? 0.28 : 0.18,
+      anchorCount: clamp(Math.floor(worldWidth / 950) + ri(0, 2) + Math.floor((worldTier - 1) / 2), 3, 7),
+      easyAmplitude: (verticalBias === "high" ? 70 : verticalBias === "medium" ? 50 : 35) + (worldTier - 1) * 8,
+      hardAmplitude: (verticalBias === "high" ? 180 : verticalBias === "medium" ? 145 : 110) + (worldTier - 1) * 18,
+      branchChance: clamp((branchDensity === "dense" ? 0.42 : branchDensity === "medium" ? 0.28 : 0.18) + (worldTier - 1) * 0.02, 0.16, 0.5),
+      hazardChance: clamp((hazardPressure === "high" ? 0.32 : hazardPressure === "medium" ? 0.2 : 0.12) * tierScale + worldConfig.hazardBias, 0.08, 0.55),
+      enemyChance: clamp((enemyPressure === "high" ? 0.28 : enemyPressure === "medium" ? 0.18 : 0.1) * tierScale + worldConfig.enemyBias, 0.08, 0.52),
+      rewardChance: clamp((rewardDensity === "high" ? 0.4 : rewardDensity === "medium" ? 0.28 : 0.18) + worldConfig.rewardBias - (worldTier - 1) * 0.015, 0.14, 0.5),
+      boostBias: worldConfig.boostBias,
+      conveyorBias: worldConfig.conveyorBias,
+      phaseBias: worldConfig.phaseBias,
       worldWidth,
       worldHeight
     };
@@ -234,7 +320,7 @@ function createLevelGenerator() {
     const startY = groundY - 180;
     const goalY = groundY - ri(300, 380);
     const gap = (goalX - startX) / (profile.anchorCount + 1);
-    const palette = THEMES[profile.theme];
+    const palette = profile.theme;
 
     const start = createPlatformRecord(startX, startY, 260, 26, "start", {
       role: "start",
@@ -294,7 +380,7 @@ function createLevelGenerator() {
   }
 
   function makePathPlatform(pathType, x, y, width, meta) {
-    const palette = THEMES[meta.profile.theme];
+    const palette = meta.profile.theme;
     const type = pathType === "hard" && meta.travelHint === "dash_required" ? "risk" : "standard";
     const platform = createPlatformRecord(x, y, width, meta.height || 20, type, {
       role: meta.role || "path",
@@ -311,7 +397,7 @@ function createLevelGenerator() {
       rewardScore: meta.rewardScore || 0,
       edgeType: meta.edgeType || null,
       isEssential: meta.isEssential !== false,
-      visualTheme: meta.profile.theme,
+      visualTheme: meta.profile.worldType,
       durability: meta.durability ?? null,
       degradeMode: meta.degradeMode ?? null,
       degradeState: meta.degradeState ?? null,
@@ -412,7 +498,7 @@ function createLevelGenerator() {
           edgeType: "rescue",
           anchorId: toAnchor.anchorId,
           riskScore: 0,
-          colorHint: THEMES[profile.theme][pathType === "hard" ? "hard" : "easy"]
+          colorHint: profile.theme[pathType === "hard" ? "hard" : "easy"]
         });
         routePlatforms.push(rescue);
         edges.push({ fromId: current.id, toId: rescue.id, traversalType: "jump", requiredDash: false, difficulty: pathType });
@@ -533,7 +619,7 @@ function createLevelGenerator() {
           degradeMode: type === "crumble" ? "on_dash_contact" : null,
           degradeState: type === "crumble" ? "stable" : null
         });
-        platform.colorHint = THEMES[profile.theme].branch;
+        platform.colorHint = profile.theme.branch;
 
         if (!isReachable(current, platform, travelHint === "dash_reward_branch" ? "dash_optional" : "standard_preferred")) {
           break;
@@ -569,6 +655,7 @@ function createLevelGenerator() {
   }
 
   function reservePowerUpSlots(platforms, profile) {
+    const powerPool = profile.allowedPowerUps?.length ? profile.allowedPowerUps : ["doubleDash", "highJump"];
     const candidates = platforms.filter((p) => {
       if (!p.supportsPowerUp) return false;
       if (p.hasPowerUp || p.enemySpawn || p.hasSawblade) return false;
@@ -579,7 +666,7 @@ function createLevelGenerator() {
     });
 
     candidates.sort((a, b) => (a.x - b.x) || (a.y - b.y));
-    let powerIndex = ri(0, POWER_UP_TYPES.length - 1);
+    let powerIndex = ri(0, powerPool.length - 1);
     let lastPowerX = -9999;
 
     for (const platform of candidates) {
@@ -592,7 +679,7 @@ function createLevelGenerator() {
 
       platform.hasPowerUp = true;
       platform.hasReservedSlot = true;
-      platform.powerUpType = POWER_UP_TYPES[powerIndex % POWER_UP_TYPES.length];
+      platform.powerUpType = powerPool[powerIndex % powerPool.length];
       powerIndex++;
       lastPowerX = platform.x;
     }
@@ -609,7 +696,7 @@ function createLevelGenerator() {
         p.pathType === "easy" &&
         p.role === "path" &&
         p.w >= 150 &&
-        chance(0.16)
+        chance(clamp(0.16 + (profile.conveyorBias || 0), 0.04, 0.3))
       ) {
         p.type = "conveyor";
         p.conveyorSpeed = chance(0.5) ? -(1.1 + random() * 0.6) : (1.1 + random() * 0.6);
@@ -622,7 +709,7 @@ function createLevelGenerator() {
         p.pathType === "branch" &&
         p.role === "branch" &&
         p.tier !== "critical" &&
-        chance(0.18)
+        chance(clamp(0.18 + (profile.phaseBias || 0), 0.04, 0.32))
       ) {
         p.type = "phase";
         p.phasePeriod = 1500 + ri(0, 700);
@@ -713,7 +800,7 @@ function createLevelGenerator() {
     let refillsPlaced = 0;
     for (const p of refillCandidates) {
       if (refillsPlaced >= 5) break;
-      if (p.edgeType !== "dash_gate" && !chance(0.18)) continue;
+      if (p.edgeType !== "dash_gate" && !chance(0.16 + Math.max(0, profile.worldTier - 1) * 0.03)) continue;
       p.hasDashRefill = true;
       refillsPlaced++;
     }
@@ -732,7 +819,7 @@ function createLevelGenerator() {
     let boostsPlaced = 0;
     for (const p of boostCandidates) {
       if (boostsPlaced >= 6) break;
-      if (!chance(0.1)) continue;
+      if (!chance(clamp(0.1 + (profile.boostBias || 0), 0.03, 0.24))) continue;
       p.type = "boost";
       p.boostStrength = 8 + ri(0, 2);
       boostsPlaced++;
@@ -745,7 +832,7 @@ function createLevelGenerator() {
     }
   }
 
-  function attachAttackPickups(platforms, leafNodes) {
+  function attachAttackPickups(platforms, leafNodes, profile) {
     const candidates = [];
 
     for (const leaf of leafNodes) {
@@ -763,7 +850,8 @@ function createLevelGenerator() {
     }
 
     let placed = 0;
-    for (const attackType of ATTACK_PICKUP_TYPES) {
+    const attackPool = profile.allowedAttackPickups?.length ? profile.allowedAttackPickups : ["chakram"];
+    for (const attackType of attackPool) {
       const platform = candidates.find((candidate) => !candidate.hasAttackPickup);
       if (!platform) break;
       platform.hasAttackPickup = true;
@@ -776,6 +864,7 @@ function createLevelGenerator() {
   }
 
   function attachEnemySpawns(platforms, leafNodes, profile) {
+    const allowedEnemies = new Set(profile.allowedEnemies || []);
     const hardCandidates = platforms.filter((p) => p.pathType === "hard" && p.edgeType === "dash_gate" && p.w >= 110 && !p.hasPowerUp && !p.hasSawblade);
     const stalkerCandidates = platforms.filter((p) => p.pathType === "easy" && p.role === "path" && p.w >= 190 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
     const sentinelCandidates = platforms.filter((p) => p.pathType === "hard" && p.role === "path" && p.w >= 150 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
@@ -790,49 +879,59 @@ function createLevelGenerator() {
       p.type !== "phase"
     );
 
+    if (allowedEnemies.has("gapGuard")) {
     for (const p of hardCandidates) {
       if (chance(profile.enemyChance * 0.85)) {
         p.enemySpawn = { type: "gapGuard", aggroRange: 220 + ri(0, 50) };
       }
     }
+    }
 
     let stalkersPlaced = 0;
-    for (const p of stalkerCandidates) {
-      if (stalkersPlaced >= 5) break;
-      if (!chance(profile.enemyChance * 0.55)) continue;
-      p.enemySpawn = { type: "pacingStalker", aggroRange: 240 + ri(0, 70), speed: 145 + ri(0, 35) };
-      stalkersPlaced++;
+    if (allowedEnemies.has("pacingStalker")) {
+      for (const p of stalkerCandidates) {
+        if (stalkersPlaced >= 3 + profile.worldTier) break;
+        if (!chance(profile.enemyChance * 0.55)) continue;
+        p.enemySpawn = { type: "pacingStalker", aggroRange: 240 + ri(0, 70), speed: 145 + ri(0, 35) + profile.worldTier * 8 };
+        stalkersPlaced++;
+      }
     }
 
     let sentinelsPlaced = 0;
-    for (const p of sentinelCandidates) {
-      if (sentinelsPlaced >= 4) break;
-      if (!chance(profile.enemyChance * 0.5)) continue;
-      p.enemySpawn = { type: "sentinel", aggroRange: 280 + ri(0, 80), speed: 185 + ri(0, 40) };
-      sentinelsPlaced++;
+    if (allowedEnemies.has("sentinel")) {
+      for (const p of sentinelCandidates) {
+        if (sentinelsPlaced >= 2 + profile.worldTier) break;
+        if (!chance(profile.enemyChance * 0.5)) continue;
+        p.enemySpawn = { type: "sentinel", aggroRange: 280 + ri(0, 80), speed: 185 + ri(0, 40) + profile.worldTier * 10 };
+        sentinelsPlaced++;
+      }
     }
 
-    for (const leaf of leafNodes) {
-      if (leaf.enemySpawn || leaf.hasPowerUp) continue;
-      if (!chance(0.35 + profile.enemyChance * 0.3)) continue;
-      leaf.enemySpawn = {
-        type: "hoverer",
-        aggroRange: 420 + ri(0, 120),
-        speed: 175 + ri(0, 35),
-        interceptLeadTime: 0.25 + random() * 0.18
-      };
+    if (allowedEnemies.has("hoverer")) {
+      for (const leaf of leafNodes) {
+        if (leaf.enemySpawn || leaf.hasPowerUp) continue;
+        if (!chance(0.25 + profile.enemyChance * 0.28)) continue;
+        leaf.enemySpawn = {
+          type: "hoverer",
+          aggroRange: 420 + ri(0, 120),
+          speed: 175 + ri(0, 35) + profile.worldTier * 8,
+          interceptLeadTime: 0.25 + random() * 0.18 + (profile.worldTier - 1) * 0.02
+        };
+      }
     }
 
     let batsPlaced = 0;
-    for (const p of razorbatCandidates) {
-      if (batsPlaced >= 4) break;
-      if (!chance(0.16 + profile.enemyChance * 0.35)) continue;
-      p.enemySpawn = {
-        type: "razorbat",
-        aggroRange: 300 + ri(0, 90),
-        speed: 210 + ri(0, 50)
-      };
-      batsPlaced++;
+    if (allowedEnemies.has("razorbat")) {
+      for (const p of razorbatCandidates) {
+        if (batsPlaced >= 2 + profile.worldTier) break;
+        if (!chance(0.12 + profile.enemyChance * 0.35)) continue;
+        p.enemySpawn = {
+          type: "razorbat",
+          aggroRange: 300 + ri(0, 90),
+          speed: 210 + ri(0, 50) + profile.worldTier * 12
+        };
+        batsPlaced++;
+      }
     }
   }
 
@@ -845,13 +944,13 @@ function createLevelGenerator() {
       }
       if (!leaf.hasPowerUp && leaf.supportsPowerUp !== false && chance(profile.rewardChance * 0.45)) {
         leaf.hasPowerUp = true;
-        leaf.powerUpType = POWER_UP_TYPES[ri(0, POWER_UP_TYPES.length - 1)];
+        leaf.powerUpType = profile.allowedPowerUps[ri(0, profile.allowedPowerUps.length - 1)];
       }
     }
   }
 
   function addLightGuidance(platforms, anchors, profile) {
-    const palette = THEMES[profile.theme];
+    const palette = profile.theme;
     for (let i = 1; i < anchors.length; i++) {
       const anchor = anchors[i];
       const hardEntrance = platforms.find((p) =>
@@ -976,7 +1075,7 @@ function createLevelGenerator() {
           r: 24,
           platformId: exitPlatform.id
         },
-        color: THEMES[profile.theme].shared,
+        color: profile.theme.shared,
         kind: "loopback"
       });
     }
@@ -987,7 +1086,7 @@ function createLevelGenerator() {
   function generateBackgroundShell(platforms, anchors, profile, worldWidth, worldHeight) {
     const background = [];
     const groundY = worldHeight - 40;
-    const palette = THEMES[profile.theme];
+    const palette = profile.theme;
     const columns = clamp(Math.floor(worldWidth / 420), 8, 18);
 
     for (let i = 0; i < columns; i++) {
@@ -1061,7 +1160,154 @@ function createLevelGenerator() {
     return score;
   }
 
-  return function generateLevel(seed, difficulty, worldWidth, worldHeight) {
+  function generateBossLevel(seed, bossType, worldWidth, worldHeight) {
+    _s = seed;
+    nextId = 0;
+    branchCounter = 0;
+
+    const bossThemeMap = {
+      bossColossus: "fortress",
+      bossTempest: "cavern",
+      bossOracle: "industrial"
+    };
+    const theme = bossThemeMap[bossType] || "fortress";
+    const palette = THEMES[theme];
+    const centerX = Math.floor(worldWidth * 0.52);
+    const groundY = worldHeight - 140;
+    const platforms = [];
+
+    const floor = createPlatformRecord(centerX - 900, groundY, 1800, 44, "ground", {
+      role: "bossFloor",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false,
+      isEssential: true
+    });
+    floor.colorHint = bossType === "bossColossus" ? "#6F6A62" : bossType === "bossTempest" ? "#446C8E" : "#6467A8";
+    floor.enemySpawn = { type: bossType };
+    platforms.push(floor);
+
+    const leftPlatform = createPlatformRecord(centerX - 620, groundY - 190, 220, 20, "standard", {
+      role: "bossPerch",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false,
+      isEssential: false
+    });
+    leftPlatform.colorHint = palette.shared;
+    const midPlatform = createPlatformRecord(centerX - 90, groundY - 270, 180, 20, "standard", {
+      role: "bossPerch",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false,
+      isEssential: false
+    });
+    midPlatform.colorHint = palette.easy;
+    const rightPlatform = createPlatformRecord(centerX + 380, groundY - 190, 220, 20, "standard", {
+      role: "bossPerch",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false,
+      isEssential: false
+    });
+    rightPlatform.colorHint = palette.shared;
+    platforms.push(leftPlatform, midPlatform, rightPlatform);
+
+    const startPad = createPlatformRecord(centerX - 1040, groundY - 30, 200, 24, "start", {
+      role: "start",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false,
+      isEssential: true
+    });
+    startPad.colorHint = palette.shared;
+    platforms.push(startPad);
+
+    const background = [];
+    for (let i = 0; i < 7; i++) {
+      const pillar = createPlatformRecord(centerX - 980 + i * 320, groundY - ri(220, 520), ri(120, 180), ri(180, 520), "ghost", {
+        role: "background",
+        pathType: "decor",
+        tier: "optional",
+        layer: i % 2 === 0 ? "foreground" : "background",
+        collisionMode: "disabled",
+        isEssential: false,
+        supportsPowerUp: false,
+        supportsEnemy: false,
+        supportsHazard: false
+      });
+      pillar.isBackground = true;
+      pillar.colorHint = palette.background;
+      background.push(pillar);
+    }
+
+    const ceiling = createPlatformRecord(0, -100, worldWidth, 150, "ground", {
+      role: "worldBoundary",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      collisionMode: "solid",
+      isEssential: true,
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false
+    });
+    ceiling.colorHint = "#1F2A37";
+
+    const bottom = createPlatformRecord(0, worldHeight - 40, worldWidth, 60, "ground", {
+      role: "worldBoundary",
+      pathType: "shared",
+      tier: "critical",
+      layer: "action",
+      collisionMode: "solid",
+      isEssential: true,
+      supportsPowerUp: false,
+      supportsEnemy: false,
+      supportsHazard: false
+    });
+    bottom.colorHint = floor.colorHint;
+
+    platforms.push(...background, ceiling, bottom);
+
+    return {
+      platforms,
+      startPos: { x: startPad.x + 50, y: startPad.y - 50 },
+      goalPos: null,
+      seed,
+      difficulty: 4,
+      theme,
+      profile: { theme, bossType, bossArena: true },
+      anchors: [
+        { id: startPad.id, x: startPad.x, y: startPad.y, w: startPad.w, h: startPad.h },
+        { id: floor.id, x: floor.x, y: floor.y, w: floor.w, h: floor.h }
+      ],
+      paths: { easy: [], hard: [] },
+      branches: [],
+      pathEdges: [],
+      branchEdges: [],
+      qualityScore: 100,
+      teleporters: [],
+      mode: "boss",
+      boss: { type: bossType }
+    };
+  }
+
+  function generateLevel(seed, difficulty, worldWidth, worldHeight) {
     _s = seed;
     nextId = 0;
     branchCounter = 0;
@@ -1078,7 +1324,7 @@ function createLevelGenerator() {
     assignSceneryAndSecrets(leafNodes, profile);
     attachHazards(platforms, profile);
     attachSupportFeatures(platforms, anchors, profile);
-    attachAttackPickups(platforms, leafNodes);
+    attachAttackPickups(platforms, leafNodes, profile);
     attachEnemySpawns(platforms, leafNodes, profile);
 
     addLightGuidance(platforms, anchors, profile);
@@ -1099,7 +1345,11 @@ function createLevelGenerator() {
       goalPos: { x: goal.x + goal.w / 2 - 25, y: goal.y - 50 },
       seed,
       difficulty,
+      worldType: profile.worldType,
+      worldName: profile.worldName,
+      worldTier: profile.worldTier,
       theme: profile.theme,
+      sky: profile.sky,
       profile,
       anchors: anchors.map((a) => ({ id: a.id, x: a.x, y: a.y, w: a.w, h: a.h })),
       paths: {
@@ -1112,7 +1362,11 @@ function createLevelGenerator() {
       qualityScore,
       teleporters
     };
-  };
+  }
+
+  generateLevel.generateBossLevel = generateBossLevel;
+  return generateLevel;
 }
 
 const generateLevel = createLevelGenerator();
+const generateBossLevel = generateLevel.generateBossLevel;

@@ -19,6 +19,13 @@
     showPrediction: false
   };
 
+  const WORLD_ENEMY_COLORS = {
+    mesa: { stalker: "#4B2E20", guard: "#5A4438", hoverer: "#C86B3C", sentinel: "#FFBE5C", razorbat: "#8F3F2A" },
+    tundra: { stalker: "#304556", guard: "#41657D", hoverer: "#7ED6FF", sentinel: "#C8F1FF", razorbat: "#5A78A8" },
+    overgrowth: { stalker: "#244330", guard: "#35583F", hoverer: "#6FE38D", sentinel: "#C7FF6A", razorbat: "#4D8C45" },
+    foundry: { stalker: "#3C3C42", guard: "#534C52", hoverer: "#D16C4E", sentinel: "#FF9F6E", razorbat: "#8B4253" }
+  };
+
   // Allow toggling from devtools: window.ENEMY_DEBUG = { enabled: true, showState: true }
   Object.defineProperty(window, "ENEMY_DEBUG", {
     get() {
@@ -72,6 +79,10 @@
     if (e.state === next) return;
     e.state = next;
     e.stateSince = now;
+  }
+
+  function getEnemyPalette(worldType) {
+    return WORLD_ENEMY_COLORS[worldType] || WORLD_ENEMY_COLORS.foundry;
   }
 
   function makeBaseEnemy(id, type, x, y, w, h, platformId) {
@@ -212,6 +223,65 @@
       return e;
     }
 
+    if (type === "bossColossus") {
+      const w = 168;
+      const h = 124;
+      const x = platform.x + platform.w * 0.5 - w * 0.5;
+      const y = platform.y - h;
+      const e = makeBaseEnemy(`boss_colossus_${idx}`, type, x, y, w, h, platform.id);
+      e.isBoss = true;
+      e.state = ENEMY_STATES.PATROL;
+      e.speed = 255;
+      e.homeX = x;
+      e.homeY = y;
+      e.hp = 14;
+      e.maxHp = 14;
+      e.aggroRange = 900;
+      e.chargeCooldown = 1100;
+      e.hoverBob = randomSeedFromId(idx) * Math.PI * 2;
+      return e;
+    }
+
+    if (type === "bossTempest") {
+      const w = 112;
+      const h = 92;
+      const x = platform.x + platform.w * 0.5 - w * 0.5;
+      const y = platform.y - 320;
+      const e = makeBaseEnemy(`boss_tempest_${idx}`, type, x, y, w, h, platform.id);
+      e.isBoss = true;
+      e.state = ENEMY_STATES.PATROL;
+      e.speed = 255;
+      e.homeX = x;
+      e.homeY = y;
+      e.hp = 11;
+      e.maxHp = 11;
+      e.aggroRange = 1100;
+      e.chargeCooldown = 1350;
+      e.hoverPhase = randomSeedFromId(idx + 500) * Math.PI * 2;
+      e.hoverBob = randomSeedFromId(idx + 600) * Math.PI * 2;
+      return e;
+    }
+
+    if (type === "bossOracle") {
+      const w = 96;
+      const h = 96;
+      const x = platform.x + platform.w * 0.5 - w * 0.5;
+      const y = platform.y - 240;
+      const e = makeBaseEnemy(`boss_oracle_${idx}`, type, x, y, w, h, platform.id);
+      e.isBoss = true;
+      e.state = ENEMY_STATES.PATROL;
+      e.speed = 200;
+      e.homeX = x;
+      e.homeY = y;
+      e.hp = 12;
+      e.maxHp = 12;
+      e.aggroRange = 1100;
+      e.chargeCooldown = 1200;
+      e.hoverPhase = randomSeedFromId(idx + 700) * Math.PI * 2;
+      e.hoverBob = randomSeedFromId(idx + 800) * Math.PI * 2;
+      return e;
+    }
+
     return null;
   }
 
@@ -230,7 +300,10 @@
       const list = Array.isArray(spawn) ? spawn : [spawn];
       for (const s of list) {
         const e = createEnemyFromSpawn(s, p, idx++);
-        if (e) enemies.push(e);
+        if (e) {
+          e.worldType = level?.worldType || "foundry";
+          enemies.push(e);
+        }
       }
     }
     return enemies;
@@ -442,6 +515,118 @@
     e.facing = vx >= 0 ? 1 : -1;
   }
 
+  function updateBossColossus(e, player, platforms, dt, now) {
+    const floor = getPlatformById(platforms, e.platformId);
+    if (!floor) return;
+    e.y = floor.y - e.h;
+    const leftBound = floor.x + 100;
+    const rightBound = floor.x + floor.w - e.w - 100;
+    const playerCenter = player.x + player.w * 0.5;
+    const myCenter = e.x + e.w * 0.5;
+
+    if (e.state !== ENEMY_STATES.ACTIVE && now - e.lastAttackAt > (e.chargeCooldown || 1100)) {
+      e.lastAttackAt = now;
+      e.activeUntil = now + 720;
+      e.facing = playerCenter >= myCenter ? 1 : -1;
+      setState(e, ENEMY_STATES.ACTIVE, now);
+    }
+
+    if (e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
+      e.vx = lerp(e.vx, e.facing * e.speed * 1.45, Math.min(1, dt * 8));
+    } else {
+      if (e.state === ENEMY_STATES.ACTIVE && now > e.activeUntil) setState(e, ENEMY_STATES.RETURN, now);
+      const patrolTarget = clamp(playerCenter - e.w * 0.5, leftBound, rightBound);
+      const dx = patrolTarget - e.x;
+      e.facing = dx >= 0 ? 1 : -1;
+      e.vx = lerp(e.vx, Math.sign(dx || 1) * e.speed * 0.45, Math.min(1, dt * 4));
+    }
+
+    e.x = clamp(e.x + e.vx * dt, leftBound, rightBound);
+    if (e.x === leftBound || e.x === rightBound) e.vx *= -0.3;
+  }
+
+  function updateBossTempest(e, player, platforms, dt, now) {
+    const px = player.x + player.w * 0.5;
+    const py = player.y + player.h * 0.5;
+    const ex = e.x + e.w * 0.5;
+    const ey = e.y + e.h * 0.5;
+
+    if (e.state !== ENEMY_STATES.ACTIVE && now - e.lastAttackAt > (e.chargeCooldown || 1350)) {
+      e.lastAttackAt = now;
+      e.activeUntil = now + 680;
+      e.attackTargetX = px - e.w * 0.5;
+      e.attackTargetY = py - 18;
+      setState(e, ENEMY_STATES.ACTIVE, now);
+    }
+
+    let targetX = e.homeX + Math.cos(now / 260 + e.hoverPhase) * 170;
+    let targetY = e.homeY + Math.sin(now / 320 + e.hoverPhase) * 46;
+    if (e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
+      targetX = e.attackTargetX;
+      targetY = e.attackTargetY;
+    } else if (e.state === ENEMY_STATES.ACTIVE && now > e.activeUntil) {
+      setState(e, ENEMY_STATES.RETURN, now);
+    }
+
+    if (e.state === ENEMY_STATES.RETURN) {
+      targetX = e.homeX;
+      targetY = e.homeY;
+      if (Math.abs(e.x - e.homeX) < 12 && Math.abs(e.y - e.homeY) < 12) setState(e, ENEMY_STATES.PATROL, now);
+    }
+
+    const vx = targetX - ex;
+    const vy = targetY - ey;
+    const len = Math.sqrt(vx * vx + vy * vy) || 1;
+    const desiredSpeed = e.state === ENEMY_STATES.ACTIVE ? e.speed * 1.45 : e.speed;
+    e.vx = lerp(e.vx, (vx / len) * desiredSpeed, Math.min(1, dt * 5.2));
+    e.vy = lerp(e.vy, (vy / len) * desiredSpeed, Math.min(1, dt * 5.2));
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    e.facing = vx >= 0 ? 1 : -1;
+  }
+
+  function updateBossOracle(e, player, platforms, dt, now) {
+    const floor = getPlatformById(platforms, e.platformId);
+    if (!floor) return;
+    const perches = [
+      { x: floor.x + 180, y: floor.y - 220 },
+      { x: floor.x + floor.w * 0.5 - e.w * 0.5, y: floor.y - 340 },
+      { x: floor.x + floor.w - 180 - e.w, y: floor.y - 220 }
+    ];
+
+    if (e.state !== ENEMY_STATES.ACTIVE && now - e.lastAttackAt > (e.chargeCooldown || 1200)) {
+      e.lastAttackAt = now;
+      e.activeUntil = now + 380;
+      const playerCenter = player.x + player.w * 0.5;
+      let best = perches[0];
+      let bestDist = Infinity;
+      for (const perch of perches) {
+        const dx = perch.x - playerCenter;
+        const score = Math.abs(dx);
+        if (score < bestDist) {
+          bestDist = score;
+          best = perch;
+        }
+      }
+      e.x = best.x;
+      e.y = best.y;
+      setState(e, ENEMY_STATES.ACTIVE, now);
+    }
+
+    if (e.state === ENEMY_STATES.ACTIVE && now > e.activeUntil) {
+      setState(e, ENEMY_STATES.PATROL, now);
+    }
+
+    if (e.state !== ENEMY_STATES.ACTIVE) {
+      const homeX = floor.x + floor.w * 0.5 - e.w * 0.5;
+      const homeY = floor.y - 300 + Math.sin(now / 220 + e.hoverPhase) * 18;
+      e.vx = lerp(e.vx, (homeX - e.x) * 2.2, Math.min(1, dt * 2.8));
+      e.vy = lerp(e.vy, (homeY - e.y) * 2.2, Math.min(1, dt * 2.8));
+      e.x += e.vx * dt;
+      e.y += e.vy * dt;
+    }
+  }
+
   function updateEnemies(enemies, player, platforms, dt, now) {
     if (!enemies || enemies.length === 0) return;
     for (const e of enemies) {
@@ -451,6 +636,9 @@
       else if (e.type === "hoverer") updateHoverer(e, player, platforms, dt, now);
       else if (e.type === "sentinel") updateSentinel(e, player, platforms, dt, now);
       else if (e.type === "razorbat") updateRazorbat(e, player, platforms, dt, now);
+      else if (e.type === "bossColossus") updateBossColossus(e, player, platforms, dt, now);
+      else if (e.type === "bossTempest") updateBossTempest(e, player, platforms, dt, now);
+      else if (e.type === "bossOracle") updateBossOracle(e, player, platforms, dt, now);
     }
   }
 
@@ -458,6 +646,15 @@
     if (e.type === "gapGuard" && e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
       // Expanded hazard zone when active.
       return { x: e.x - 30, y: e.y - 24, w: e.w + 60, h: e.h + 48 };
+    }
+    if (e.type === "bossColossus" && e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
+      return { x: e.x - 16, y: e.y, w: e.w + 32, h: e.h };
+    }
+    if (e.type === "bossTempest" && e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
+      return { x: e.x - 12, y: e.y - 12, w: e.w + 24, h: e.h + 24 };
+    }
+    if (e.type === "bossOracle" && e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil) {
+      return { x: e.x - 40, y: e.y - 40, w: e.w + 80, h: e.h + 80 };
     }
     return { x: e.x, y: e.y, w: e.w, h: e.h };
   }
@@ -477,6 +674,7 @@
 
     for (const e of enemies) {
       if (e.dead && now - e.deadAt > 260) continue;
+      const palette = getEnemyPalette(e.worldType);
       const bob = e.type === "hoverer"
         ? Math.sin(now / 180 + (e.hoverBob || 0)) * 4
         : Math.sin(now / 260 + (e.hoverBob || 0)) * 1.5;
@@ -489,7 +687,7 @@
       ctx.globalAlpha = hurtAlpha * deathAlpha;
 
       if (e.type === "pacingStalker") {
-        ctx.fillStyle = "#2B2B2B";
+        ctx.fillStyle = palette.stalker;
         ctx.fillRect(sx, sy, e.w, e.h);
 
         // Eye indicator.
@@ -506,7 +704,7 @@
         }
       } else if (e.type === "gapGuard") {
         const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
-        ctx.fillStyle = "#3C3C3C";
+        ctx.fillStyle = palette.guard;
         ctx.fillRect(sx, sy, e.w, e.h);
         ctx.fillStyle = "#111111";
         ctx.fillRect(sx + 6, sy + 6, e.w - 12, e.h - 12);
@@ -517,7 +715,7 @@
           const cy = box.y + box.h * 0.5 - camera.y;
           ctx.save();
           ctx.globalAlpha = 0.75 + 0.15 * Math.sin(now / 60);
-          ctx.strokeStyle = "#00F0FF";
+          ctx.strokeStyle = palette.sentinel;
           ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.arc(cx, cy, Math.max(box.w, box.h) * 0.55, 0, Math.PI * 2);
@@ -527,7 +725,7 @@
       } else if (e.type === "hoverer") {
         ctx.save();
         ctx.translate(sx + e.w * 0.5, sy + e.h * 0.5);
-        ctx.fillStyle = "#7B2CBF";
+        ctx.fillStyle = palette.hoverer;
         ctx.beginPath();
         ctx.arc(0, 0, e.w * 0.5, 0, Math.PI * 2);
         ctx.fill();
@@ -549,7 +747,7 @@
         ctx.save();
         ctx.translate(sx + e.w * 0.5, sy + e.h * 0.5);
         ctx.rotate((now / 220) * (e.facing >= 0 ? 1 : -1));
-        ctx.fillStyle = active ? "#FF6B6B" : "#00D4FF";
+        ctx.fillStyle = active ? "#FF6B6B" : palette.sentinel;
         ctx.beginPath();
         ctx.moveTo(0, -e.h * 0.55);
         ctx.lineTo(e.w * 0.55, 0);
@@ -564,7 +762,7 @@
         ctx.restore();
       } else if (e.type === "razorbat") {
         const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
-        ctx.fillStyle = active ? "#FF6B6B" : "#A1395C";
+        ctx.fillStyle = active ? "#FF6B6B" : palette.razorbat;
         ctx.beginPath();
         ctx.moveTo(sx, sy + e.h * 0.5);
         ctx.quadraticCurveTo(sx + e.w * 0.25, sy - 10, sx + e.w * 0.5, sy + e.h * 0.35);
@@ -574,6 +772,62 @@
         ctx.fill();
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(sx + (e.facing >= 0 ? e.w * 0.62 : e.w * 0.18), sy + e.h * 0.32, 4, 4);
+      } else if (e.type === "bossColossus") {
+        const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
+        ctx.fillStyle = active ? "#E76F51" : "#6D6875";
+        ctx.fillRect(sx, sy + 18, e.w, e.h - 18);
+        ctx.fillStyle = "#B7B1C2";
+        ctx.fillRect(sx + 18, sy, e.w - 36, 44);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(sx + (e.facing >= 0 ? e.w - 42 : 26), sy + 14, 12, 12);
+      } else if (e.type === "bossTempest") {
+        const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
+        ctx.save();
+        ctx.translate(sx + e.w * 0.5, sy + e.h * 0.5);
+        ctx.rotate(Math.sin(now / 180 + e.hoverPhase) * 0.15);
+        ctx.fillStyle = active ? "#7BE0FF" : "#4C6FFF";
+        ctx.beginPath();
+        ctx.moveTo(0, -e.h * 0.55);
+        ctx.quadraticCurveTo(e.w * 0.52, -e.h * 0.2, e.w * 0.35, e.h * 0.45);
+        ctx.quadraticCurveTo(0, e.h * 0.2, -e.w * 0.35, e.h * 0.45);
+        ctx.quadraticCurveTo(-e.w * 0.52, -e.h * 0.2, 0, -e.h * 0.55);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.beginPath();
+        ctx.arc(0, 0, e.w * 0.35, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === "bossOracle") {
+        const active = e.state === ENEMY_STATES.ACTIVE && now <= e.activeUntil;
+        ctx.save();
+        ctx.translate(sx + e.w * 0.5, sy + e.h * 0.5);
+        ctx.rotate(now / 620);
+        ctx.fillStyle = active ? "#D65DFF" : "#7075FF";
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI * 2 * i) / 6;
+          const r = i % 2 === 0 ? e.w * 0.54 : e.w * 0.26;
+          const x = Math.cos(angle) * r;
+          const y = Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        if (active) {
+          const box = enemyCollisionBox(e, now);
+          ctx.strokeStyle = "rgba(214,93,255,0.55)";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(box.x + box.w * 0.5 - camera.x, box.y + box.h * 0.5 - camera.y, box.w * 0.42, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       ctx.restore();
