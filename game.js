@@ -507,6 +507,7 @@ window.onload = function () {
 
             player.x = teleporter.exit.x - player.w * 0.5;
             player.y = teleporter.exit.y - player.h * 0.5;
+            // Preserve momentum on teleportation (no change to vx/vy)
             player.lastTeleportAt = now;
             teleporter.cooldownUntil = now + 500;
             consumeConfirmKey();

@@ -1,5 +1,12 @@
 # TO-DO
 
+## Pending
+- Implement "Level Generator Rework" as outlined in `LEVEL_PLAN.md` (Phase A/B)
+- Add Squash and Stretch to player movement for better "Game Feel"
+- Implement Dash Echoes (Ghost Trails) during dash movement
+- Add Camera Interpolation (Lerping) for smoother camera movement
+- Implement momentum-preserving teleporters
+
 ## Completed
 - Fixed platform solidity so hidden/disabled scenery and blocker cleanup platforms no longer collide.
 - Kept the settings/bindings overlay live and clickable, with a reset path inside the game.
