@@ -23,9 +23,9 @@ function createLevelGenerator() {
         background: "rgba(188, 129, 84, 0.16)"
       },
       sky: { top: "#1B1210", bottom: "#8E5B38", haze: "rgba(255, 200, 132, 0.08)" },
-      powerUps: ["highJump", "superSpeed", "doubleDash", "overcharge"],
-      attackPickups: ["chakram"],
-      enemies: ["pacingStalker", "sentinel", "gapGuard"],
+      powerUps: ["highJump", "superSpeed", "doubleDash", "overcharge", "sandSkimmer"],
+      attackPickups: ["chakram", "sandShuriken"],
+      enemies: ["pacingStalker", "sentinel", "gapGuard", "sandrunner"],
       rewardBias: 0.02,
       enemyBias: 0.03,
       hazardBias: 0.02,
@@ -44,9 +44,9 @@ function createLevelGenerator() {
         background: "rgba(137, 180, 210, 0.16)"
       },
       sky: { top: "#0B1625", bottom: "#4E7196", haze: "rgba(203, 235, 255, 0.08)" },
-      powerUps: ["icePhysics", "feather", "doubleDash", "antiGravity"],
-      attackPickups: ["burst"],
-      enemies: ["hoverer", "razorbat", "gapGuard"],
+      powerUps: ["icePhysics", "feather", "doubleDash", "antiGravity", "glacierGrip"],
+      attackPickups: ["burst", "iceNeedle"],
+      enemies: ["hoverer", "razorbat", "gapGuard", "iceWisp"],
       rewardBias: 0.03,
       enemyBias: 0.01,
       hazardBias: 0.01,
@@ -65,9 +65,9 @@ function createLevelGenerator() {
         background: "rgba(72, 120, 69, 0.16)"
       },
       sky: { top: "#0E1E13", bottom: "#2F5E39", haze: "rgba(164, 219, 132, 0.08)" },
-      powerUps: ["ghost", "magnet", "miniBox", "highJump"],
-      attackPickups: ["chakram", "burst"],
-      enemies: ["hoverer", "pacingStalker", "razorbat"],
+      powerUps: ["ghost", "magnet", "miniBox", "highJump", "vineLeap"],
+      attackPickups: ["chakram", "burst", "thornBurst"],
+      enemies: ["hoverer", "pacingStalker", "razorbat", "vineCrawler"],
       rewardBias: 0.05,
       enemyBias: 0.02,
       hazardBias: -0.02,
@@ -86,9 +86,9 @@ function createLevelGenerator() {
         background: "rgba(99, 102, 109, 0.16)"
       },
       sky: { top: "#171923", bottom: "#4E3B3C", haze: "rgba(242, 170, 130, 0.08)" },
-      powerUps: ["overcharge", "giantBox", "doubleDash", "superSpeed"],
-      attackPickups: ["burst"],
-      enemies: ["sentinel", "gapGuard", "razorbat"],
+      powerUps: ["overcharge", "giantBox", "doubleDash", "superSpeed", "forgeRunner"],
+      attackPickups: ["burst", "forgeShot"],
+      enemies: ["sentinel", "gapGuard", "razorbat", "drillDrone"],
       rewardBias: -0.01,
       enemyBias: 0.05,
       hazardBias: 0.05,
@@ -303,6 +303,7 @@ function createLevelGenerator() {
       branchChance: clamp((branchDensity === "dense" ? 0.42 : branchDensity === "medium" ? 0.28 : 0.18) + (worldTier - 1) * 0.02, 0.16, 0.5),
       hazardChance: clamp((hazardPressure === "high" ? 0.32 : hazardPressure === "medium" ? 0.2 : 0.12) * tierScale + worldConfig.hazardBias, 0.08, 0.55),
       enemyChance: clamp((enemyPressure === "high" ? 0.28 : enemyPressure === "medium" ? 0.18 : 0.1) * tierScale + worldConfig.enemyBias, 0.08, 0.52),
+      enemyDensity: clamp(0.7 + (worldTier - 1) * 0.2 + (enemyPressure === "high" ? 0.25 : enemyPressure === "medium" ? 0.12 : 0), 0.7, 1.7),
       rewardChance: clamp((rewardDensity === "high" ? 0.4 : rewardDensity === "medium" ? 0.28 : 0.18) + worldConfig.rewardBias - (worldTier - 1) * 0.015, 0.14, 0.5),
       boostBias: worldConfig.boostBias,
       conveyorBias: worldConfig.conveyorBias,
@@ -865,6 +866,8 @@ function createLevelGenerator() {
 
   function attachEnemySpawns(platforms, leafNodes, profile) {
     const allowedEnemies = new Set(profile.allowedEnemies || []);
+    const density = profile.enemyDensity || 1;
+    const tierBoost = Math.max(0, profile.worldTier - 1);
     const hardCandidates = platforms.filter((p) => p.pathType === "hard" && p.edgeType === "dash_gate" && p.w >= 110 && !p.hasPowerUp && !p.hasSawblade);
     const stalkerCandidates = platforms.filter((p) => p.pathType === "easy" && p.role === "path" && p.w >= 190 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
     const sentinelCandidates = platforms.filter((p) => p.pathType === "hard" && p.role === "path" && p.w >= 150 && !p.hasPowerUp && !p.hasSawblade && !p.enemySpawn);
@@ -880,19 +883,26 @@ function createLevelGenerator() {
     );
 
     if (allowedEnemies.has("gapGuard")) {
-    for (const p of hardCandidates) {
-      if (chance(profile.enemyChance * 0.85)) {
-        p.enemySpawn = { type: "gapGuard", aggroRange: 220 + ri(0, 50) };
+      for (const p of hardCandidates) {
+        if (chance(profile.enemyChance * 0.85 * density)) {
+          p.enemySpawn = { type: "gapGuard", aggroRange: 220 + ri(0, 50) + tierBoost * 14 };
+        }
       }
     }
+
+    if (allowedEnemies.has("sandrunner")) {
+      for (const p of hardCandidates) {
+        if (p.enemySpawn || !chance(profile.enemyChance * 0.55 * density)) continue;
+        p.enemySpawn = { type: "sandrunner", speed: 150 + ri(0, 30) + tierBoost * 18, aggroRange: 280 + tierBoost * 24 };
+      }
     }
 
     let stalkersPlaced = 0;
     if (allowedEnemies.has("pacingStalker")) {
       for (const p of stalkerCandidates) {
         if (stalkersPlaced >= 3 + profile.worldTier) break;
-        if (!chance(profile.enemyChance * 0.55)) continue;
-        p.enemySpawn = { type: "pacingStalker", aggroRange: 240 + ri(0, 70), speed: 145 + ri(0, 35) + profile.worldTier * 8 };
+        if (!chance(profile.enemyChance * 0.55 * density)) continue;
+        p.enemySpawn = { type: "pacingStalker", aggroRange: 240 + ri(0, 70) + tierBoost * 10, speed: 145 + ri(0, 35) + tierBoost * 9 };
         stalkersPlaced++;
       }
     }
@@ -901,8 +911,8 @@ function createLevelGenerator() {
     if (allowedEnemies.has("sentinel")) {
       for (const p of sentinelCandidates) {
         if (sentinelsPlaced >= 2 + profile.worldTier) break;
-        if (!chance(profile.enemyChance * 0.5)) continue;
-        p.enemySpawn = { type: "sentinel", aggroRange: 280 + ri(0, 80), speed: 185 + ri(0, 40) + profile.worldTier * 10 };
+        if (!chance(profile.enemyChance * 0.5 * density)) continue;
+        p.enemySpawn = { type: "sentinel", aggroRange: 280 + ri(0, 80) + tierBoost * 14, speed: 185 + ri(0, 40) + tierBoost * 12 };
         sentinelsPlaced++;
       }
     }
@@ -910,12 +920,25 @@ function createLevelGenerator() {
     if (allowedEnemies.has("hoverer")) {
       for (const leaf of leafNodes) {
         if (leaf.enemySpawn || leaf.hasPowerUp) continue;
-        if (!chance(0.25 + profile.enemyChance * 0.28)) continue;
+        if (!chance((0.25 + profile.enemyChance * 0.28) * density)) continue;
         leaf.enemySpawn = {
           type: "hoverer",
-          aggroRange: 420 + ri(0, 120),
-          speed: 175 + ri(0, 35) + profile.worldTier * 8,
-          interceptLeadTime: 0.25 + random() * 0.18 + (profile.worldTier - 1) * 0.02
+          aggroRange: 420 + ri(0, 120) + tierBoost * 26,
+          speed: 175 + ri(0, 35) + tierBoost * 10,
+          interceptLeadTime: 0.25 + random() * 0.18 + tierBoost * 0.02
+        };
+      }
+    }
+
+    if (allowedEnemies.has("iceWisp")) {
+      for (const leaf of leafNodes) {
+        if (leaf.enemySpawn || leaf.hasPowerUp || leaf.w < 120) continue;
+        if (!chance((0.12 + profile.enemyChance * 0.2) * density)) continue;
+        leaf.enemySpawn = {
+          type: "iceWisp",
+          aggroRange: 520 + tierBoost * 36,
+          speed: 165 + ri(0, 25) + tierBoost * 12,
+          interceptLeadTime: 0.3 + random() * 0.12 + tierBoost * 0.015
         };
       }
     }
@@ -924,22 +947,44 @@ function createLevelGenerator() {
     if (allowedEnemies.has("razorbat")) {
       for (const p of razorbatCandidates) {
         if (batsPlaced >= 2 + profile.worldTier) break;
-        if (!chance(0.12 + profile.enemyChance * 0.35)) continue;
+        if (!chance((0.12 + profile.enemyChance * 0.35) * density)) continue;
         p.enemySpawn = {
           type: "razorbat",
           aggroRange: 300 + ri(0, 90),
-          speed: 210 + ri(0, 50) + profile.worldTier * 12
+          speed: 210 + ri(0, 50) + tierBoost * 14
         };
         batsPlaced++;
+      }
+    }
+
+    if (allowedEnemies.has("vineCrawler")) {
+      for (const p of platforms) {
+        if (p.pathType !== "branch" || p.role !== "path" || p.enemySpawn || p.hasPowerUp || p.w < 130) continue;
+        if (!chance((0.18 + profile.enemyChance * 0.22) * density)) continue;
+        p.enemySpawn = { type: "vineCrawler", speed: 120 + ri(0, 22) + tierBoost * 12, aggroRange: 260 + tierBoost * 20 };
+      }
+    }
+
+    if (allowedEnemies.has("drillDrone")) {
+      for (const p of hardCandidates) {
+        if (p.enemySpawn || p.w < 140 || !chance((0.15 + profile.enemyChance * 0.24) * density)) continue;
+        p.enemySpawn = { type: "drillDrone", aggroRange: 320 + tierBoost * 30, speed: 175 + ri(0, 30) + tierBoost * 14 };
       }
     }
   }
 
   function assignSceneryAndSecrets(leafNodes, profile) {
+    const sceneryByWorld = {
+      mesa: ["VASE", "TOTEM", "DRY_SHRUB"],
+      tundra: ["ICE_SPIKE", "CRYSTAL", "SNOWDRIFT"],
+      overgrowth: ["TREE", "MUSHROOM", "FERN"],
+      foundry: ["GEAR", "PIPE", "CRATE"]
+    };
+    const options = sceneryByWorld[profile.worldType] || ["OLD_STATUE", "VASE"];
     for (const leaf of leafNodes) {
       if (chance(0.2)) {
         leaf.hasScenery = true;
-        leaf.sceneryType = chance(0.5) ? "OLD_STATUE" : "VASE";
+        leaf.sceneryType = options[ri(0, options.length - 1)];
         leaf.rewardScore += 2;
       }
       if (!leaf.hasPowerUp && leaf.supportsPowerUp !== false && chance(profile.rewardChance * 0.45)) {
@@ -982,6 +1027,154 @@ function createLevelGenerator() {
         p.pebbleCount = clamp(Math.floor(p.w / 48), 2, 5);
       }
     }
+  }
+
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function getPlatformRect(platform) {
+    return { x: platform.x, y: platform.y, w: platform.w, h: platform.h };
+  }
+
+  function getCheckpointZone(platform) {
+    return {
+      x: platform.x + platform.w - 38,
+      y: platform.y - 86,
+      w: 42,
+      h: 92
+    };
+  }
+
+  function getPowerUpZone(platform) {
+    return {
+      x: platform.x + platform.w * 0.5 - 28,
+      y: platform.y - 56,
+      w: 56,
+      h: 56
+    };
+  }
+
+  function getAttackPickupZone(platform) {
+    return {
+      x: platform.x + platform.w * 0.5 - 24,
+      y: platform.y - 88,
+      w: 48,
+      h: 48
+    };
+  }
+
+  function getDashRefillZone(platform) {
+    return {
+      x: platform.x + platform.w * 0.5 - 18,
+      y: platform.y - 42,
+      w: 36,
+      h: 36
+    };
+  }
+
+  function getExitFlagZone(platform) {
+    return {
+      x: platform.x + platform.w - 16,
+      y: platform.y - 40,
+      w: 30,
+      h: 26
+    };
+  }
+
+  function getExitAccessZone(platform) {
+    return {
+      x: platform.x + platform.w - 60,
+      y: platform.y - 140,
+      w: 120,
+      h: 170
+    };
+  }
+
+  function canReserveZone(platforms, owner, zone) {
+    for (const candidate of platforms) {
+      if (candidate.id === owner.id) continue;
+      if (candidate.isBackground || candidate.isHiddenScenery) continue;
+      if (candidate.collisionMode === "disabled") continue;
+      if (!rectsOverlap(getPlatformRect(candidate), zone)) continue;
+      return false;
+    }
+    return true;
+  }
+
+  function clearExitApproach(platforms, goal) {
+    const zone = getExitAccessZone(goal);
+    const flagZone = getExitFlagZone(goal);
+
+    for (const platform of platforms) {
+      if (platform.id === goal.id) continue;
+      if (platform.isBackground || platform.isHiddenScenery) continue;
+      if (platform.role === "worldBoundary") continue;
+      if (!rectsOverlap(getPlatformRect(platform), zone)) continue;
+
+      if (platform.type === "spike") {
+        platform.collisionMode = "disabled";
+        platform.isHiddenScenery = true;
+        continue;
+      }
+
+      if (platform.enemySpawn) platform.enemySpawn = null;
+      platform.hasSawblade = false;
+
+      if (!platform.isEssential) {
+        platform.collisionMode = "disabled";
+        platform.isHiddenScenery = true;
+        continue;
+      }
+
+      if (rectsOverlap(getPlatformRect(platform), flagZone)) {
+        const leftOfGoal = goal.x - platform.w - 40;
+        platform.x = Math.min(platform.x, leftOfGoal);
+      }
+    }
+  }
+
+  function enforceReservedClearances(platforms, anchors) {
+    function clearBlockedPickups() {
+      for (const platform of platforms) {
+        if (platform.hasPowerUp && !canReserveZone(platforms, platform, getPowerUpZone(platform))) {
+          platform.hasPowerUp = false;
+          platform.powerUpType = null;
+        }
+
+        if (platform.hasAttackPickup && !canReserveZone(platforms, platform, getAttackPickupZone(platform))) {
+          platform.hasAttackPickup = false;
+          platform.attackPickupType = null;
+        }
+
+        if (platform.hasDashRefill && !canReserveZone(platforms, platform, getDashRefillZone(platform))) {
+          platform.hasDashRefill = false;
+        }
+      }
+    }
+
+    function clearBlockedCheckpoints() {
+      for (const anchor of anchors) {
+        if (!anchor.isCheckpoint) continue;
+        if (!canReserveZone(platforms, anchor, getCheckpointZone(anchor))) {
+          anchor.isCheckpoint = false;
+        }
+      }
+    }
+
+    clearBlockedPickups();
+    clearBlockedCheckpoints();
+
+    const goal = anchors.find((anchor) => anchor.type === "exit");
+    if (goal) {
+      clearExitApproach(platforms, goal);
+      if (!canReserveZone(platforms, goal, getExitFlagZone(goal))) {
+        clearExitApproach(platforms, goal);
+      }
+    }
+
+    clearBlockedPickups();
+    clearBlockedCheckpoints();
   }
 
   function enforceBreatherRule(platforms) {
@@ -1330,6 +1523,7 @@ function createLevelGenerator() {
     addLightGuidance(platforms, anchors, profile);
     addReactiveSetDressing(platforms);
     enforceBreatherRule(platforms);
+    enforceReservedClearances(platforms, anchors);
     const teleporters = buildTeleporters(platforms, anchors, profile);
 
     const background = generateBackgroundShell(platforms, anchors, profile, worldWidth, worldHeight);
